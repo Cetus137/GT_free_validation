@@ -157,6 +157,26 @@ def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30) -> pd.Dat
     return pd.DataFrame(rows)
 
 
+def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types) -> pd.DataFrame:
+    """Accuracy vs true rate: run the estimator on every single-error row of the
+    calibration sweep (real embryo pairs), using the GLOBAL baseline, and record
+    the estimate of the injected type and the spill-over into the other types."""
+    df = pd.read_csv(sweep_csv)
+    real = df[df.source.str.startswith("CE") & (df.error != "none") & df.error.isin(types)].copy()
+    real = real.dropna(subset=CHANNELS)
+    rows = []
+    for _, r in real.iterrows():
+        d = np.array([r[ch] - baseline[ch] for ch in CHANNELS])
+        est = estimate(d, A, noise)
+        row = dict(source=r.source, pair=r.pair, error=r.error, rate=r.rate, rate_realised=r.rate_realised)
+        for i, t in enumerate(types):
+            row[f"est_{t}"] = est[i]
+        row["est_same"] = est[types.index(r.error)]
+        row["est_other"] = est.sum() - row["est_same"]
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
 def report(val: pd.DataFrame, types: list[str], label: str) -> pd.DataFrame:
     out = []
     for t in types:
@@ -195,6 +215,16 @@ def main() -> int:
     print("\n### Channel noise (sd over clean pairs, x100) and global baseline")
     print(pd.DataFrame({"noise_x100": noise * 100, "baseline": baseline}).round(3).to_string())
     print(f"\ncondition number of weighted A: {np.linalg.cond(A.values / noise.values[:, None]):.1f}")
+
+    on_sweep = estimate_on_sweep(a.sweep, A, noise, baseline, types)
+    sweep_out = a.out.with_name(a.out.stem + "_on_sweep.csv")
+    on_sweep.to_csv(sweep_out, index=False)
+    g = on_sweep.groupby(["error", "rate"]).agg(true=("rate_realised", "mean"), est=("est_same", "mean"),
+                                                 spill=("est_other", "mean")).reset_index()
+    print("\n### Single-error sweep rows, global baseline: estimate of the injected type and spill-over (percent)")
+    print(g.assign(true=100 * g.true, est=100 * g.est, spill=100 * g.spill)
+           .pivot(index="error", columns="rate", values=["est", "spill"]).round(2).to_string())
+    print(f"wrote {sweep_out}")
 
     val = validate(a, A, noise, baseline, types)
     val.to_csv(a.out, index=False)
