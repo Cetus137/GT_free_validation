@@ -127,9 +127,10 @@ SCENARIOS = {
 }
 
 
-def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30) -> pd.DataFrame:
+def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: float = 1.0) -> pd.DataFrame:
     """One tracker, one movie: a fixed error mix over many held-out pairs,
-    estimated from the MEAN metric vector against the global baseline."""
+    estimated from the MEAN metric vector against the global baseline.
+    ``scale`` multiplies every scenario rate (e.g. 0.25 for a low-rate test)."""
     rng = np.random.default_rng(a.seed + 1)
     rows = []
     for seq in ("01", "02"):
@@ -140,7 +141,8 @@ def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30) -> pd.Dat
         hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         held = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]
         pairs = rng.choice(held, size=n_pairs, replace=False)
-        for name, true in SCENARIOS.items():
+        for name, true0 in SCENARIOS.items():
+            true = {k: v * scale for k, v in true0.items()}
             d_glob, realised = [], []
             for ti in pairs:
                 pair = [frames[ti], frames[ti + 1]]
@@ -203,6 +205,10 @@ def main() -> int:
     p.add_argument("--sparse", action="store_true", help="half the mixtures have one dominant type")
     p.add_argument("--six", action="store_true", help="solve for split and merge as well")
     p.add_argument("--constant", action="store_true", help="also run the fixed-mix, pooled-over-pairs test")
+    p.add_argument("--scenario-scale", type=float, default=1.0, help="multiply pooled-scenario rates (0.25 = low-rate test)")
+    p.add_argument("--on-sweep", type=Path, default=None,
+                   help="sweep CSV to run the per-rate accuracy test on (default: the calibration sweep)")
+    p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     sweep.MODE = "delaunay"
@@ -216,7 +222,7 @@ def main() -> int:
     print(pd.DataFrame({"noise_x100": noise * 100, "baseline": baseline}).round(3).to_string())
     print(f"\ncondition number of weighted A: {np.linalg.cond(A.values / noise.values[:, None]):.1f}")
 
-    on_sweep = estimate_on_sweep(a.sweep, A, noise, baseline, types)
+    on_sweep = estimate_on_sweep(a.on_sweep or a.sweep, A, noise, baseline, types)
     sweep_out = a.out.with_name(a.out.stem + "_on_sweep.csv")
     on_sweep.to_csv(sweep_out, index=False)
     g = on_sweep.groupby(["error", "rate"]).agg(true=("rate_realised", "mean"), est=("est_same", "mean"),
@@ -226,13 +232,14 @@ def main() -> int:
            .pivot(index="error", columns="rate", values=["est", "spill"]).round(2).to_string())
     print(f"wrote {sweep_out}")
 
-    val = validate(a, A, noise, baseline, types)
-    val.to_csv(a.out, index=False)
-    report(val, types, "4-type solver" if not a.six else "6-type solver")
-    print(f"\nwrote {a.out}")
+    if not a.skip_mixtures:
+        val = validate(a, A, noise, baseline, types)
+        val.to_csv(a.out, index=False)
+        report(val, types, "4-type solver" if not a.six else "6-type solver")
+        print(f"\nwrote {a.out}")
 
     if a.constant and not a.six:
-        pooled = validate_constant(a, A, noise, baseline, types)
+        pooled = validate_constant(a, A, noise, baseline, types, scale=a.scenario_scale)
         pooled_out = a.out.with_name(a.out.stem + "_pooled.csv")
         pooled.to_csv(pooled_out, index=False)
         e = np.concatenate([(pooled[f"est_{t}"] - pooled[f"true_{t}"]).values * 100 for t in types])

@@ -52,14 +52,14 @@ def _ci(g: pd.DataFrame, col: str) -> pd.DataFrame:
     return agg
 
 
-def main_figure(on_sweep: pd.DataFrame, pooled: pd.DataFrame) -> None:
+def main_figure(on_sweep: pd.DataFrame, pooled: pd.DataFrame, lim: float = 22, ticks=(0, 5, 10, 20),
+                stem: str = "fig_error_mix", subtitle_a: str = "") -> None:
     fig = plt.figure(figsize=(7.1, 2.75))
     gs = fig.add_gridspec(1, 6, width_ratios=[1, 1, 1, 1, 0.35, 1.6], wspace=0.25,
                           left=0.07, right=0.985, top=0.83, bottom=0.38)
 
     # ---- a: accuracy vs true rate, one small multiple per type ---------------------
     axes = [fig.add_subplot(gs[0, i]) for i in range(4)]
-    lim = 22
     for ax, t in zip(axes, TYPES):
         g = on_sweep[on_sweep.error == t]
         same = _ci(g, "est_same"); other = _ci(g, "est_other")
@@ -71,17 +71,16 @@ def main_figure(on_sweep: pd.DataFrame, pooled: pd.DataFrame) -> None:
         ax.plot(np.r_[0, 100 * other.x], np.r_[0, 100 * other.y], lw=1.4, ls=(0, (3, 2)), color=INK2)
         ax.set_title(LABELS[t], loc="left", pad=3, color=INK)
         ax.set_xlim(0, lim); ax.set_ylim(0, lim); ax.set_aspect("equal")
-        ax.set_xticks([0, 5, 10, 20]); ax.set_yticks([0, 5, 10, 20])
+        ax.set_xticks(list(ticks)); ax.set_yticks(list(ticks))
         ax.grid(color=GRID, lw=0.6)
         ax.set_xlabel("True rate (% cells)")
-        err10 = 100 * (same.y - same.x)
         ax.text(0.05, 0.95, f"spill ≤ {100 * other.y.max():.1f} pt", transform=ax.transAxes, ha="left",
                 va="top", fontsize=7, color=INK2)
     for ax in axes[1:]:
         ax.tick_params(labelleft=False)
     axes[0].set_ylabel("Estimated rate (%)")
     fig.text(0.01, 0.95, "a", fontsize=11, fontweight="bold", color=INK)
-    fig.text(0.07, 0.95, "One error type injected alone into real embryo frame pairs, global baseline",
+    fig.text(0.07, 0.95, subtitle_a or "One error type injected alone into real embryo frame pairs, global baseline",
              fontsize=8, color=INK2, va="center")
     handles_a = [Line2D([], [], color=INK2, lw=2, marker="o", ms=4.5, mec=SURFACE, mew=1.2,
                         label="Estimated rate of the injected type (mean, 95% CI over pairs)"),
@@ -112,8 +111,8 @@ def main_figure(on_sweep: pd.DataFrame, pooled: pd.DataFrame) -> None:
     fig.legend(handles=handles_b, loc="lower left", bbox_to_anchor=(0.07, 0.0), ncol=6, frameon=False,
                handletextpad=0.3, columnspacing=1.0)
     for ext in ("png", "pdf"):
-        fig.savefig(OUT / f"fig_error_mix.{ext}", dpi=300 if ext == "png" else None)
-    print("wrote", OUT / "fig_error_mix.png")
+        fig.savefig(OUT / f"{stem}.{ext}", dpi=300 if ext == "png" else None)
+    print("wrote", OUT / f"{stem}.png")
 
 
 def pairs_figure(single: pd.DataFrame) -> None:
@@ -144,6 +143,12 @@ def main() -> int:
     main_figure(pd.read_csv(RESULTS / "error_mix_validation_on_sweep.csv"),
                 pd.read_csv(RESULTS / "error_mix_validation_pooled.csv"))
     pairs_figure(pd.read_csv(RESULTS / "error_mix_validation.csv"))
+    low_sweep = RESULTS / "error_mix_low_on_sweep.csv"
+    low_pooled = RESULTS / "error_mix_low_pooled.csv"
+    if low_sweep.exists() and low_pooled.exists():
+        main_figure(pd.read_csv(low_sweep), pd.read_csv(low_pooled), lim=2.3, ticks=(0, 0.5, 1, 1.5, 2),
+                    stem="fig_error_mix_low",
+                    subtitle_a="Low rates: one error type injected alone into real embryo frame pairs, global baseline")
     return 0
 
 
