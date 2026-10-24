@@ -1,12 +1,54 @@
 from __future__ import annotations
 
+from itertools import combinations
+
 import numpy as np
 from scipy.spatial import Delaunay, KDTree
 from scipy.spatial import QhullError
 from scipy.stats import rankdata
 
-# vertex-pair indices for all 6 edges of a tetrahedron
-_SIMPLEX_PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
+def _delaunay_adjacency(
+    positions: np.ndarray,
+) -> tuple[list[int], list[np.ndarray], set[int]] | None:
+    """Delaunay neighbour lists for points in any dimension d >= 2.
+
+    Returns ``(vertices, neighbour_lists, hull_vertices)`` where
+    ``neighbour_lists[i]`` holds the neighbour indices of ``vertices[i]``, or
+    ``None`` when the point set cannot be triangulated (fewer than d+1 points,
+    or a degenerate configuration).
+    """
+    n, d = positions.shape
+    if n < d + 1:
+        return None
+    try:
+        tri = Delaunay(positions)
+    except QhullError:
+        return None
+
+    S = tri.simplices                                   # (num_simplices, d+1)
+    pairs = list(combinations(range(d + 1), 2))         # all edges of a simplex
+    row = np.concatenate([S[:, a] for a, b in pairs] + [S[:, b] for a, b in pairs])
+    col = np.concatenate([S[:, b] for a, b in pairs] + [S[:, a] for a, b in pairs])
+
+    # deduplicate directed edges: sort by (row, col), keep first of each run
+    order = np.lexsort((col, row))
+    row = row[order]
+    col = col[order]
+    edge_key = row.astype(np.int64) * n + col.astype(np.int64)
+    unique = np.empty(len(edge_key), dtype=bool)
+    unique[0] = True
+    unique[1:] = edge_key[1:] != edge_key[:-1]
+    row = row[unique]
+    col = col[unique]
+
+    split_at = np.where(np.diff(row))[0] + 1
+    vertices = row[np.concatenate(([0], split_at))].tolist()
+    nb_lists = np.split(col, split_at)
+
+    # cells on the convex hull have open Voronoi regions — their Delaunay edges
+    # extend toward infinity and are geometrically spurious.  Callers skip them.
+    hull_vertices: set[int] = set(tri.convex_hull.ravel().tolist())
+    return vertices, nb_lists, hull_vertices
 
 
 def border_interior_mask(
@@ -83,15 +125,16 @@ def _delaunay_neighbour_ranks_and_distances(
     max_distance: float | None = None,
     max_degree: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return neighbour indices and distances from the 3-D Delaunay triangulation.
+    """Return neighbour indices and distances from the Delaunay triangulation.
 
     Two cells are neighbours iff they share a Voronoi face (i.e. are connected
     by a Delaunay edge).  Unlike k-NN, the neighbourhood size is topology-driven
-    and varies per cell (~12–20 in dense 3-D packings).
+    and varies per cell (~12–20 in dense 3-D packings, ~6 in 2-D).  Works in
+    any dimension d >= 2.
 
     Parameters
     ----------
-    positions : (n, 3)
+    positions : (n, d)
     max_distance :
         Hard distance cutoff.  Delaunay edges longer than this are masked out
         with -1 / inf sentinels, identical to the kNN convention.
@@ -106,45 +149,13 @@ def _delaunay_neighbour_ranks_and_distances(
     k_max is the maximum valid-neighbour count across all cells after filtering.
     """
     n = positions.shape[0]
-    if n < 4:
+    adj = _delaunay_adjacency(positions)
+    if adj is None:
         return np.zeros((n, 0), dtype=int), np.zeros((n, 0))
-
-    try:
-        tri = Delaunay(positions)
-    except QhullError:
-        return np.zeros((n, 0), dtype=int), np.zeros((n, 0))
-
-    S = tri.simplices  # (num_simplices, 4)
-
-    # Build all directed edges (both directions for each undirected Delaunay edge)
-    fwd_rows = [S[:, a] for a, b in _SIMPLEX_PAIRS]
-    fwd_cols = [S[:, b] for a, b in _SIMPLEX_PAIRS]
-    row = np.concatenate(fwd_rows + [S[:, b] for a, b in _SIMPLEX_PAIRS])
-    col = np.concatenate(fwd_cols + [S[:, a] for a, b in _SIMPLEX_PAIRS])
-
-    # Deduplicate: sort by (row, col) then keep unique pairs
-    order = np.lexsort((col, row))
-    row = row[order]
-    col = col[order]
-    edge_key = row.astype(np.int64) * n + col.astype(np.int64)
-    unique = np.empty(len(edge_key), dtype=bool)
-    unique[0] = True
-    unique[1:] = edge_key[1:] != edge_key[:-1]
-    row = row[unique]
-    col = col[unique]
-
-    # Split into per-vertex neighbour lists (row is already sorted)
-    split_at = np.where(np.diff(row))[0] + 1
-    unique_rows = row[np.concatenate(([0], split_at))]
-    nb_lists = np.split(col, split_at)
-
-    # cells on the convex hull have open Voronoi regions — their Delaunay edges
-    # extend toward infinity and are geometrically spurious.  Exclude them so
-    # that only interior cells (with fully bounded Voronoi cells) contribute.
-    hull_vertices: set[int] = set(tri.convex_hull.ravel().tolist())
+    vertices, nb_lists, hull_vertices = adj
 
     per_vertex: list[tuple[np.ndarray, np.ndarray]] = [(np.empty(0, int), np.empty(0))] * n
-    for vertex, neighbours in zip(unique_rows.tolist(), nb_lists):
+    for vertex, neighbours in zip(vertices, nb_lists):
         if vertex in hull_vertices:
             continue  # leave as empty — hull cell, open Voronoi region
         d = np.linalg.norm(positions[neighbours] - positions[vertex], axis=1)
@@ -339,43 +350,15 @@ def _frame_neighbour_map_delaunay(
     nb_ids  : {assigned_id: [neighbour_id, ...]}  — sorted by distance
     nb_dists: {assigned_id: [distance, ...]}
     """
-    n = positions.shape[0]
-    if n < 4:
+    adj = _delaunay_adjacency(positions)
+    if adj is None:
         return {}, {}
-
-    try:
-        tri = Delaunay(positions)
-    except QhullError:
-        return {}, {}
-
-    S = tri.simplices
-
-    fwd_rows = [S[:, a] for a, b in _SIMPLEX_PAIRS]
-    fwd_cols = [S[:, b] for a, b in _SIMPLEX_PAIRS]
-    row = np.concatenate(fwd_rows + [S[:, b] for a, b in _SIMPLEX_PAIRS])
-    col = np.concatenate(fwd_cols + [S[:, a] for a, b in _SIMPLEX_PAIRS])
-
-    order = np.lexsort((col, row))
-    row = row[order]
-    col = col[order]
-    edge_key = row.astype(np.int64) * n + col.astype(np.int64)
-    unique = np.empty(len(edge_key), dtype=bool)
-    unique[0] = True
-    unique[1:] = edge_key[1:] != edge_key[:-1]
-    row = row[unique]
-    col = col[unique]
-
-    split_at = np.where(np.diff(row))[0] + 1
-    unique_rows = row[np.concatenate(([0], split_at))]
-    nb_lists = np.split(col, split_at)
-
-    # cells on the convex hull have open Voronoi regions — exclude them
-    hull_vertices: set[int] = set(tri.convex_hull.ravel().tolist())
+    vertices, nb_lists, hull_vertices = adj
 
     nb_ids: dict[int, list[int]] = {}
     nb_dists: dict[int, list[float]] = {}
 
-    for vertex, neighbours in zip(unique_rows.tolist(), nb_lists):
+    for vertex, neighbours in zip(vertices, nb_lists):
         if vertex in hull_vertices:
             continue  # open Voronoi region — skip
         cid = int(assigned_ids[vertex])
