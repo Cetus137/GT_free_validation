@@ -96,6 +96,11 @@ def evaluate_pair(pair: list[dict], k: int, cap: float, excluded: set[int] | Non
     out = {name: nanmean(res[key][0]) for name, key in METRIC_KEYS.items()}
     out["survival"] = float(res["track_survival"][0])
     out["n_eval"] = int(np.isfinite(res["weighted_identity_overlap"][0]).sum())
+    # outlier fractions: per-cell values biology never produces in one step
+    disp = res["wio_displaced"][0]; disp = disp[np.isfinite(disp)]
+    rc = res["rank_correlation"][0]; rc = rc[np.isfinite(rc)]
+    out["disp_out"] = float((disp > 0.4).mean()) if disp.size else float("nan")   # displaced share > 0.4
+    out["rc_out"] = float((rc < 0.3).mean()) if rc.size else float("nan")         # rank correlation < 0.3
     return out
 
 
@@ -112,7 +117,8 @@ def sweep_pair(pair: list[dict], box, k, cap, excluded, rates, seeds, meta: dict
                 real = realised_error_rates(pair, obs, log, first_frame_clean=True)[kind]
                 m = evaluate_pair(obs, k, cap, excluded)
                 rows.append({**meta, "error": kind, "rate": rate, "rate_realised": real, "seed": seed,
-                             "spacing": spacing, **m, **{f"d_{n}": m[n] - base[n] for n in METRIC_KEYS}})
+                             "spacing": spacing, **m,
+                             **{f"d_{n}": m[n] - base[n] for n in list(METRIC_KEYS) + ["disp_out", "rc_out"]}})
     return rows
 
 

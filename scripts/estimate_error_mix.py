@@ -37,6 +37,7 @@ from tracking_validation.lineage import division_affected_cells, inherit_parent_
 import ce_error_sweep as sweep  # noqa: E402
 
 CHANNELS = ["survival", "vanished", "displaced", "newcomer", "rc", "prc", "pwio"]
+OUTLIER_CHANNELS = ["disp_out", "rc_out"]     # fraction of cells with displaced > 0.4 / rank corr < 0.3
 TYPES_4 = ["switch", "frag", "miss", "fp"]
 TYPES_6 = ["switch", "frag", "miss", "fp", "split", "merge"]
 NOISE_FLOOR = 0.003      # metric units; zero-noise channels get this floor
@@ -218,10 +219,14 @@ def main() -> int:
     p.add_argument("--on-sweep", type=Path, default=None,
                    help="sweep CSV to run the per-rate accuracy test on (default: the calibration sweep)")
     p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
+    p.add_argument("--outliers", action="store_true",
+                   help="add the per-cell outlier-fraction channels (requires sweeps that record them)")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     sweep.MODE = a.mode
     types = TYPES_6 if a.six else TYPES_4
+    if a.outliers:
+        CHANNELS.extend(c for c in OUTLIER_CHANNELS if c not in CHANNELS)
 
     A, noise, baseline = calibrate(a.sweep, types)
     pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
