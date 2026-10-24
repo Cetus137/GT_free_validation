@@ -24,7 +24,14 @@ python -m tracking_validation ctc Fluo-N3DH-CE/01_GT/TRA --dataset Fluo-N3DH-CE 
 ```
 
 The metrics do not yet account for divisions; see
-[docs/division_policy.md](docs/division_policy.md) for the proposed policy.
+[docs/division_policy.md](docs/division_policy.md) for the proposed policy. Two cheap
+workarounds live in `tracking_validation.lineage`: `inherit_parent_labels` (one daughter
+continues the mother's track) and `division_affected_cells` + `mask_cells` (drop focal
+cells whose neighbourhood touches a division).
+
+**Data location.** CTC datasets are kept under `data/<dataset>/` (e.g.
+`data/Fluo-N3DH-CE/01_GT/TRA`). That folder is git-ignored: the Cell Tracking Challenge
+terms forbid redistribution, so the data must never be committed or pushed.
 
 ```bash
 pip install -e ".[dev]"

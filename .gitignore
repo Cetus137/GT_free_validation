@@ -18,6 +18,9 @@ htmlcov/
 venv/
 .env
 
+# Datasets (Cell Tracking Challenge terms forbid redistribution; never commit)
+data/
+
 # Editors / OS
 .vscode/
 .idea/
