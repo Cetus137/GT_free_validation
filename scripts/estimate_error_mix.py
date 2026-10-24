@@ -44,11 +44,14 @@ NOISE_FLOOR = 0.003      # metric units; zero-noise channels get this floor
 
 # --------------------------------------------------------------------------- calibration
 
-def calibrate(sweep_csv: Path, types: list[str]) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+def calibrate(sweep_csv: Path, types: list[str], source: str | None = None) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """Response matrix A[channel, type] (metric change per unit rate), channel
-    noise (sd over clean pairs), and global clean baseline per channel."""
+    noise (sd over clean pairs), and global clean baseline per channel.
+    ``source`` restricts calibration to one recording (e.g. "CE01")."""
     df = pd.read_csv(sweep_csv)
     real = df[df.source.str.startswith("CE")]
+    if source is not None:
+        real = real[real.source == source]
     base = real[real.error == "none"].set_index(["source", "pair"])
     err = real[real.error != "none"].copy()
     for ch in CHANNELS:
@@ -127,13 +130,14 @@ SCENARIOS = {
 }
 
 
-def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: float = 1.0) -> pd.DataFrame:
+def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: float = 1.0,
+                      seqs=("01", "02")) -> pd.DataFrame:
     """One tracker, one movie: a fixed error mix over many held-out pairs,
     estimated from the MEAN metric vector against the global baseline.
     ``scale`` multiplies every scenario rate (e.g. 0.25 for a low-rate test)."""
     rng = np.random.default_rng(a.seed + 1)
     rows = []
-    for seq in ("01", "02"):
+    for seq in seqs:
         data = inherit_parent_labels(sweep.load_ce(a.data_root, a.cache, seq), prefer="nearest")
         start = int(np.argmax(data.counts() >= 50))
         frames = data.frames[start:]
@@ -159,12 +163,15 @@ def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: fl
     return pd.DataFrame(rows)
 
 
-def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types) -> pd.DataFrame:
+def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types, source: str | None = None) -> pd.DataFrame:
     """Accuracy vs true rate: run the estimator on every single-error row of the
     calibration sweep (real embryo pairs), using the GLOBAL baseline, and record
-    the estimate of the injected type and the spill-over into the other types."""
+    the estimate of the injected type and the spill-over into the other types.
+    ``source`` restricts to one recording."""
     df = pd.read_csv(sweep_csv)
     real = df[df.source.str.startswith("CE") & (df.error != "none") & df.error.isin(types)].copy()
+    if source is not None:
+        real = real[real.source == source]
     real = real.dropna(subset=CHANNELS)
     rows = []
     for _, r in real.iterrows():
