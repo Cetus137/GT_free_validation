@@ -117,6 +117,46 @@ def validate(a, A, noise, baseline, types):
     return pd.DataFrame(rows)
 
 
+SCENARIOS = {
+    "switch-heavy":   dict(switch=0.04, frag=0.01, miss=0.01, fp=0.005),
+    "miss-heavy":     dict(switch=0.005, frag=0.01, miss=0.04, fp=0.02),
+    "frag-heavy":     dict(switch=0.01, frag=0.04, miss=0.005, fp=0.01),
+    "fp-heavy":       dict(switch=0.005, frag=0.005, miss=0.01, fp=0.04),
+    "low-everything": dict(switch=0.01, frag=0.01, miss=0.01, fp=0.01),
+    "clean":          dict(switch=0.0, frag=0.0, miss=0.0, fp=0.0),
+}
+
+
+def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30) -> pd.DataFrame:
+    """One tracker, one movie: a fixed error mix over many held-out pairs,
+    estimated from the MEAN metric vector against the global baseline."""
+    rng = np.random.default_rng(a.seed + 1)
+    rows = []
+    for seq in ("01", "02"):
+        data = inherit_parent_labels(sweep.load_ce(a.data_root, a.cache, seq), prefer="nearest")
+        start = int(np.argmax(data.counts() >= 50))
+        frames = data.frames[start:]
+        excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode="delaunay")
+        hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
+        held = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]
+        pairs = rng.choice(held, size=n_pairs, replace=False)
+        for name, true in SCENARIOS.items():
+            d_glob, realised = [], []
+            for ti in pairs:
+                pair = [frames[ti], frames[ti + 1]]
+                spacing = sweep.median_nn(pair[0]["positions"])
+                obs, log = apply_tracking_errors(pair, mixture_config(true, spacing), box,
+                                                 np.random.default_rng(int(rng.integers(1 << 30))))
+                realised.append(realised_error_rates(pair, obs, log, first_frame_clean=True))
+                m = sweep.evaluate_pair(obs, 8, a.cap, excluded[ti])
+                d_glob.append([m[ch] - baseline[ch] for ch in CHANNELS])
+            est = estimate(np.mean(d_glob, axis=0), A, noise)
+            r = pd.DataFrame(realised).mean()
+            rows.append(dict(seq=seq, scenario=name, n_pairs=n_pairs,
+                             **{f"true_{t}": r[t] for t in types}, **{f"est_{t}": est[i] for i, t in enumerate(types)}))
+    return pd.DataFrame(rows)
+
+
 def report(val: pd.DataFrame, types: list[str], label: str) -> pd.DataFrame:
     out = []
     for t in types:
@@ -142,6 +182,7 @@ def main() -> int:
     p.add_argument("--max-rate", type=float, default=0.06, help="each type's rate ~ U(0, max_rate)")
     p.add_argument("--sparse", action="store_true", help="half the mixtures have one dominant type")
     p.add_argument("--six", action="store_true", help="solve for split and merge as well")
+    p.add_argument("--constant", action="store_true", help="also run the fixed-mix, pooled-over-pairs test")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     sweep.MODE = "delaunay"
@@ -159,6 +200,17 @@ def main() -> int:
     val.to_csv(a.out, index=False)
     report(val, types, "4-type solver" if not a.six else "6-type solver")
     print(f"\nwrote {a.out}")
+
+    if a.constant and not a.six:
+        pooled = validate_constant(a, A, noise, baseline, types)
+        pooled_out = a.out.with_name(a.out.stem + "_pooled.csv")
+        pooled.to_csv(pooled_out, index=False)
+        e = np.concatenate([(pooled[f"est_{t}"] - pooled[f"true_{t}"]).values * 100 for t in types])
+        print(f"\n### Constant mix over 30 held-out pairs per recording, global baseline (percent of cells)")
+        for _, r in pooled.iterrows():
+            print(f"  {r.seq} {r.scenario:15s} " + "  ".join(f"{t}: {100*r['true_'+t]:4.1f} -> {100*r['est_'+t]:4.1f}" for t in types))
+        print(f"  RMSE {np.sqrt((e**2).mean()):.2f} points, max abs error {np.abs(e).max():.2f}")
+        print(f"wrote {pooled_out}")
     return 0
 
 
