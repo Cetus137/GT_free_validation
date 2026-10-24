@@ -654,8 +654,10 @@ def compute_neighbour_continuity_observed(
                 if ok
             )
             interior_both = interior0 & interior1
-            # cells eligible for absence penalty: interior at t0, interior at t0∩t1 boundary
-            absent_eligible = interior0 - interior1 if penalise_absence else set()
+            # cells eligible for absence penalty: interior at t0 AND absent from t1.
+            # (Not ``interior0 - interior1``: that would also penalise cells that
+            # are still tracked at t1 but drifted into the border band.)
+            absent_eligible = interior0 - set1 if penalise_absence else set()
         else:
             interior_both   = None
             absent_eligible = (set0 - set1) if penalise_absence else set()

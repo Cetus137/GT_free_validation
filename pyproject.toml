@@ -16,6 +16,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
 
+[tool.pytest.ini_options]
+# Always test THIS repo's source, even if another copy of tracking_validation
+# is installed (editable or otherwise) in the active environment.
+pythonpath = ["src"]
+testpaths = ["tests"]
+
 [tool.setuptools]
 package-dir = {"" = "src"}
 
