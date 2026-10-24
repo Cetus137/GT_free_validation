@@ -57,10 +57,16 @@ plt.rcParams.update({
 })
 
 
-def load() -> pd.DataFrame:
-    files = sorted(RESULTS.glob("ce_error_sweep_*delaunay.csv"))
+def load(sim_shape: str) -> pd.DataFrame:
+    """Slab: one file holds real + slab simulations for all six types.
+    Cube: the original cube run plus the fragmentation-only cube run."""
+    if sim_shape == "slab":
+        files = [RESULTS / "ce_error_sweep_slab_delaunay.csv"]
+    else:
+        files = [RESULTS / "ce_error_sweep_t1only_delaunay.csv", RESULTS / "ce_error_sweep_frag_delaunay.csv"]
+    files = [f for f in files if f.exists()]
     if not files:
-        sys.exit(f"no sweep results in {RESULTS}")
+        sys.exit(f"no sweep results for {sim_shape} in {RESULTS}")
     df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
     df = df[df.error != "none"].copy()
     df["src"] = np.where(df.source.str.startswith("CE"), "real", "sim")
@@ -85,13 +91,15 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--all-types", action="store_true", help="six error types incl. split and merge")
     p.add_argument("--positional", action="store_true", help="include the positional-overlap column")
+    p.add_argument("--sim-shape", choices=("slab", "cube"), default="slab",
+                   help="which simulations to overlay (default slab = embryo thickness)")
     a = p.parse_args(argv)
     ORDER = ORDER_ALL if a.all_types else ORDER_NUCLEAR
     COMPONENTS = COMPONENTS_ALL if a.positional else COMPONENTS_MAIN
     ncol = 3 if a.all_types else 2
-    stem = "fig_ce_response_all" if a.all_types else "fig_ce_response"
+    stem = ("fig_ce_response_all" if a.all_types else "fig_ce_response") + ("" if a.sim_shape == "slab" else "_cube")
 
-    df = load()
+    df = load(a.sim_shape)
     OUT.mkdir(exist_ok=True)
 
     fig = plt.figure(figsize=(7.1 if a.all_types else 6.3, 4.6))
@@ -131,7 +139,8 @@ def main(argv: list[str] | None = None) -> int:
     # legend for the two line styles (identity of the panels is in the titles)
     from matplotlib.lines import Line2D
     handles = [Line2D([], [], color=INK2, lw=2, marker="o", ms=4.5, mec=SURFACE, mew=1.2, label="Real embryo (mean, 95% CI)"),
-               Line2D([], [], color=INK2, lw=1.6, ls=(0, (3, 2)), label="Stage-matched simulations (mean, range)")]
+               Line2D([], [], color=INK2, lw=1.6, ls=(0, (3, 2)),
+                      label=f"Stage-matched {'slab' if a.sim_shape == 'slab' else 'cube'} simulations (mean, range)")]
     fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.08 if a.all_types else 0.09, 0.0),
                ncol=2, frameon=False, handlelength=2.6, columnspacing=1.5)
     fig.text(0.01, 0.975, "a", fontsize=11, fontweight="bold", color=INK)
