@@ -25,7 +25,8 @@ Positions are scaled by the voxel size so that every distance parameter in the
 package can be given in microns.  Voxel sizes for the common CTC datasets are
 tabulated in ``KNOWN_VOXEL_SIZES``; pass ``voxel_size`` explicitly otherwise.
 
-Requires ``tifffile`` (``pip install -e ".[ctc]"``).
+Requires ``tifffile`` (``pip install -e ".[ctc]"``).  Command line:
+``python -m tracking_validation ctc <folder> --dataset Fluo-N3DH-CE --out tracks.csv``.
 """
 from __future__ import annotations
 
@@ -350,23 +351,3 @@ def summarize(data: CTCTracks) -> str:
         f"unlisted markers (not in table)    : {len(data.unlisted)}",
     ]
     return "\n".join(lines)
-
-
-def _main(argv: list[str] | None = None) -> int:  # pragma: no cover - thin CLI
-    import argparse
-    p = argparse.ArgumentParser(description="Convert a CTC tracking folder to a track CSV.")
-    p.add_argument("folder", help="e.g. Fluo-N3DH-CE/01_GT/TRA or Fluo-N3DH-CE/01_RES")
-    p.add_argument("--dataset", help="CTC dataset name for voxel-size lookup, e.g. Fluo-N3DH-CE")
-    p.add_argument("--voxel-size", type=float, nargs="+", help="microns per voxel, x y [z]")
-    p.add_argument("--out", help="output CSV path (default: print summary only)")
-    a = p.parse_args(argv)
-    data = read_ctc_tracks(a.folder, voxel_size=tuple(a.voxel_size) if a.voxel_size else None,
-                           dataset=a.dataset)
-    print(summarize(data))
-    if a.out:
-        print("wrote", write_tracks_csv(data, a.out))
-    return 0
-
-
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(_main())

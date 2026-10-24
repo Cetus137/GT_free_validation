@@ -20,7 +20,7 @@ centroids scaled to microns and a `parent_ids` field for divisions:
 
 ```bash
 pip install -e ".[ctc]"
-python -m tracking_validation.ctc Fluo-N3DH-CE/01_GT/TRA --dataset Fluo-N3DH-CE --out ce01.csv
+python -m tracking_validation ctc Fluo-N3DH-CE/01_GT/TRA --dataset Fluo-N3DH-CE --out ce01.csv
 ```
 
 The metrics do not yet account for divisions; see
