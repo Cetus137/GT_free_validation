@@ -8,8 +8,10 @@ Real frames: both recordings, frames with >= 50 cells, one daughter inherits the
 mother's label, and cells whose neighbourhood touches a division are excluded
 from evaluation (division-free sample).  Each sampled consecutive frame pair is
 corrupted with ONE error type at ONE nominal rate, several seeds, and the
-metrics are computed on the corrupted pair.  Error distances are relative to
-the pair's median nearest-neighbour spacing s:
+metrics are computed on the corrupted pair.  The FIRST frame of each pair is
+treated as truth and left untouched: all detection errors land in t1, and
+switches are wrong links into t1.  Error distances are relative to the pair's
+median nearest-neighbour spacing s:
 
     switch cap = 3 s,  split separation = 0.75 s,  FP offset = s (near cells)
 
@@ -65,7 +67,7 @@ def median_nn(pos: np.ndarray) -> float:
 def error_config(kind: str, rate: float, spacing: float) -> ErrorConfig:
     cfg = dict(p_miss=0.0, lambda_fp=0.0, p_switch=0.0, p_merge=0.0, p_split=0.0,
                split_distance=0.75 * spacing, max_switch_distance=3.0 * spacing,
-               fp_placement="near_cells", fp_offset=spacing)
+               fp_placement="near_cells", fp_offset=spacing, first_frame_clean=True)
     if kind == "miss":
         cfg["p_miss"] = rate
     elif kind == "fp":
@@ -81,8 +83,12 @@ def error_config(kind: str, rate: float, spacing: float) -> ErrorConfig:
     return ErrorConfig(**cfg)
 
 
+MODE = "delaunay"   # set from --mode in main()
+
+
 def evaluate_pair(pair: list[dict], k: int, cap: float, excluded: set[int] | None) -> dict:
-    res = compute_neighbour_continuity_observed(pair, k=k, max_neighbour_distance=cap, extra_metrics=True)
+    res = compute_neighbour_continuity_observed(pair, k=k, max_neighbour_distance=cap,
+                                                neighbourhood_mode=MODE, extra_metrics=True)
     if excluded:
         res = mask_cells(res, [excluded])
     out = {name: nanmean(res[key][0]) for name, key in METRIC_KEYS.items()}
@@ -101,7 +107,7 @@ def sweep_pair(pair: list[dict], box, k, cap, excluded, rates, seeds, meta: dict
             for seed in range(seeds):
                 rng = np.random.default_rng(hash((meta["source"], meta["pair"], kind, rate, seed)) % 2**32)
                 obs, log = apply_tracking_errors(pair, error_config(kind, rate, spacing), box, rng)
-                real = realised_error_rates(pair, obs, log)[kind]
+                real = realised_error_rates(pair, obs, log, first_frame_clean=True)[kind]
                 m = evaluate_pair(obs, k, cap, excluded)
                 rows.append({**meta, "error": kind, "rate": rate, "rate_realised": real, "seed": seed,
                              "spacing": spacing, **m, **{f"d_{n}": m[n] - base[n] for n in METRIC_KEYS}})
@@ -134,7 +140,7 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
         counts = data.counts()
         start = int(np.argmax(counts >= a.min_cells))
         frames = data.frames[start:]
-        excluded = division_affected_cells(frames, k=a.k, max_neighbour_distance=a.cap)
+        excluded = division_affected_cells(frames, k=a.k, max_neighbour_distance=a.cap, neighbourhood_mode=MODE)
         lo = frames[0]["positions"].min(axis=0); hi = frames[-1]["positions"].max(axis=0)
         box = tuple(float(v) for v in (hi + 2.0))          # FPs are clipped to this box
         t0 = time.time()
@@ -206,7 +212,9 @@ def main() -> int:
     p.add_argument("--data-root", type=Path, default=ROOT / "data")
     p.add_argument("--cache", type=Path, default=ROOT / "data" / "_cache")
     p.add_argument("--out", type=Path, default=ROOT / "data" / "_results" / "ce_error_sweep.csv")
-    p.add_argument("--k", type=int, default=8)
+    p.add_argument("--mode", choices=("delaunay", "knn"), default="delaunay",
+                   help="neighbourhood definition (default delaunay; k is ignored then)")
+    p.add_argument("--k", type=int, default=8, help="neighbours for --mode knn")
     p.add_argument("--cap", type=float, default=15.0, help="neighbour distance cap, microns")
     p.add_argument("--min-cells", type=int, default=50)
     p.add_argument("--stride", type=int, default=4, help="use every n-th frame pair")
@@ -216,6 +224,8 @@ def main() -> int:
     p.add_argument("--sim-cells", type=int, default=1000)
     p.add_argument("--sim-seeds", type=int, default=5)
     a = p.parse_args()
+    global MODE
+    MODE = a.mode
 
     rows, measures = run_real(a, a.rates)
     if a.sim:
@@ -225,7 +235,7 @@ def main() -> int:
     a.out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(a.out, index=False)
     measures.to_csv(a.out.with_name("ce_stage_measurements.csv"), index=False)
-    print(f"\nwrote {a.out} ({len(df)} rows)")
+    print(f"\nwrote {a.out} ({len(df)} rows); neighbourhood mode = {MODE}; first frame clean")
 
     pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
     print("\n### Stage measurements (means): spacing / displacement in µm, density in cells/µm³")

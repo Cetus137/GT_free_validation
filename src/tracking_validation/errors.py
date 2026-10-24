@@ -47,6 +47,9 @@ class ErrorConfig:
                                               # mis-links (A(t)->B(t+1), B(t)->A(t+1))
                                               # must be within this distance; None =
                                               # original same-frame k-nearest swaps
+    first_frame_clean: bool = False  # True: frame 0 is treated as truth and receives
+                                     # no misses, merges, splits or false positives
+                                     # (cross-frame switches never touch frame 0 anyway)
 
     def __post_init__(self) -> None:
         if self.fp_placement not in ("uniform", "near_cells"):
@@ -141,18 +144,21 @@ def _apply_missed_segmentations(
     frames,
     p_miss: float,
     rng: np.random.Generator,
+    start_frame: int = 0,
 ) -> tuple[list[dict], list[list[int]]]:
     """Drop each detection independently with probability p_miss.
 
     Accepts a dense ``(T, N, d)`` array or a list of frame dicts.  The log holds
-    the ``true_ids`` of dropped detections per frame.
+    the ``true_ids`` of dropped detections per frame.  Frames before
+    ``start_frame`` are passed through unchanged.
     """
     observed_in = _as_frames(frames)
     observed: list[dict] = []
     missed_log: list[list[int]] = []
-    for frame in observed_in:
+    for frame_idx, frame in enumerate(observed_in):
         n = frame["positions"].shape[0]
-        keep = rng.random(n) >= p_miss if p_miss > 0.0 else np.ones(n, dtype=bool)
+        keep = rng.random(n) >= p_miss if (p_miss > 0.0 and frame_idx >= start_frame) \
+            else np.ones(n, dtype=bool)
         missed_log.append(frame["true_ids"][~keep].astype(int).tolist())
         observed.append(_subset(frame, np.where(keep)[0]))
     return observed, missed_log
@@ -165,6 +171,7 @@ def _apply_merges(
     p_merge: float,
     merge_id_start: int,
     rng: np.random.Generator,
+    start_frame: int = 0,
 ) -> tuple[list[dict], list[list[dict]], int]:
     """Merge nearby detection pairs with probability p_merge.
 
@@ -182,7 +189,7 @@ def _apply_merges(
         positions, true_ids, assigned = frame["positions"], frame["true_ids"], frame["assigned_ids"]
         n_obs = positions.shape[0]
         frame_merges: list[dict] = []
-        if n_obs < 2 or p_merge <= 0.0:
+        if n_obs < 2 or p_merge <= 0.0 or frame_idx < start_frame:
             result.append(frame); merge_log.append(frame_merges); continue
 
         _, nn_idx = KDTree(positions).query(positions, k=2, workers=-1)
@@ -225,6 +232,7 @@ def _apply_splits(
     split_distance: float,
     split_id_start: int,
     rng: np.random.Generator,
+    start_frame: int = 0,
 ) -> tuple[list[dict], list[list[dict]], int]:
     """Replace a detection by two at ±split_distance/2 along a random direction.
 
@@ -240,7 +248,7 @@ def _apply_splits(
         positions, true_ids, assigned = frame["positions"], frame["true_ids"], frame["assigned_ids"]
         n_obs, d = positions.shape
         frame_splits: list[dict] = []
-        if n_obs == 0 or p_split <= 0.0:
+        if n_obs == 0 or p_split <= 0.0 or frame_idx < start_frame:
             result.append(frame); split_log.append(frame_splits); continue
 
         pos_l, true_l, asg_l, src_l = [], [], [], []
@@ -279,6 +287,7 @@ def _apply_false_positives(
     fp_rate: float | None = None,
     fp_placement: str = "uniform",
     fp_offset: float = 5.0,
+    start_frame: int = 0,
 ) -> tuple[list[dict], list[list[dict]], int]:
     """Add spurious detections per frame.
 
@@ -295,7 +304,7 @@ def _apply_false_positives(
     for frame_idx, frame in enumerate(observed):
         n_obs, d = frame["positions"].shape
         rate = fp_rate * n_obs if fp_rate is not None else lambda_fp
-        n_fp = int(rng.poisson(rate)) if rate > 0 else 0
+        n_fp = int(rng.poisson(rate)) if (rate > 0 and frame_idx >= start_frame) else 0
         frame_fps: list[dict] = []
         if n_fp == 0 or (fp_placement == "near_cells" and n_obs == 0):
             result.append(frame); fp_log.append(frame_fps); continue
@@ -485,14 +494,17 @@ def apply_tracking_errors(
     """
     clean = _as_frames(frames)
     next_id = int(max((int(f["assigned_ids"].max()) for f in clean if len(f["assigned_ids"])), default=-1)) + 1
+    start = 1 if config.first_frame_clean else 0
 
-    observed, missed_log = _apply_missed_segmentations(clean, config.p_miss, rng)
-    observed, merge_log, next_id = _apply_merges(observed, config.p_merge, merge_id_start=next_id, rng=rng)
+    observed, missed_log = _apply_missed_segmentations(clean, config.p_miss, rng, start_frame=start)
+    observed, merge_log, next_id = _apply_merges(
+        observed, config.p_merge, merge_id_start=next_id, rng=rng, start_frame=start)
     observed, split_log, next_id = _apply_splits(
-        observed, config.p_split, config.split_distance, split_id_start=next_id, rng=rng)
+        observed, config.p_split, config.split_distance, split_id_start=next_id, rng=rng, start_frame=start)
     observed, fp_log, _ = _apply_false_positives(
         observed, config.lambda_fp, box_size, fp_id_start=next_id, rng=rng,
-        fp_rate=config.fp_rate, fp_placement=config.fp_placement, fp_offset=config.fp_offset)
+        fp_rate=config.fp_rate, fp_placement=config.fp_placement, fp_offset=config.fp_offset,
+        start_frame=start)
     if config.max_switch_distance is None:
         observed, switch_log = _apply_id_switches(observed, config.p_switch, config.switch_among_k, rng)
     else:
@@ -509,7 +521,8 @@ def apply_tracking_errors(
     return observed, error_log
 
 
-def realised_error_rates(clean, observed: list[dict], error_log: dict) -> dict[str, float]:
+def realised_error_rates(clean, observed: list[dict], error_log: dict,
+                         first_frame_clean: bool = False) -> dict[str, float]:
     """Events per clean detection, pooled over frames: what actually happened.
 
     ``miss``: dropped detections / clean detections.  ``fp``: added / clean.
@@ -518,18 +531,23 @@ def realised_error_rates(clean, observed: list[dict], error_log: dict) -> dict[s
     because a switch is a wrong link INTO a frame and the first frame has none;
     under the same-frame rule, which also fires in frame 0, the denominator is
     all frames.
+
+    With ``first_frame_clean`` (``first_frame_clean=True`` passed here), the
+    denominator for every type is the detections in frames 1..T-1, since frame 0
+    could not receive errors.
     """
     clean = _as_frames(clean)
-    n_clean = sum(len(f["assigned_ids"]) for f in clean)
-    if n_clean == 0:
+    n_all = sum(len(f["assigned_ids"]) for f in clean)
+    n_later = sum(len(f["assigned_ids"]) for f in clean[1:]) if len(clean) > 1 else n_all
+    n_det = n_later if first_frame_clean else n_all
+    if n_det == 0:
         return {k: float("nan") for k in ("miss", "fp", "switch", "merge", "split")}
     switch_in_frame0 = any(ev["frame"] == 0 for ev in error_log["switches"])
-    n_switchable = n_clean if (switch_in_frame0 or len(clean) == 1) else \
-        sum(len(f["assigned_ids"]) for f in clean[1:])
+    n_switchable = n_all if (switch_in_frame0 or len(clean) == 1) else n_later
     return {
-        "miss":   len(error_log["missed"]) / n_clean,
-        "fp":     len(error_log["false_positives"]) / n_clean,
+        "miss":   len(error_log["missed"]) / n_det,
+        "fp":     len(error_log["false_positives"]) / n_det,
         "switch": 2 * len(error_log["switches"]) / n_switchable if n_switchable else float("nan"),
-        "merge":  2 * len(error_log["merges"]) / n_clean,
-        "split":  len(error_log["splits"]) / n_clean,
+        "merge":  2 * len(error_log["merges"]) / n_det,
+        "split":  len(error_log["splits"]) / n_det,
     }
