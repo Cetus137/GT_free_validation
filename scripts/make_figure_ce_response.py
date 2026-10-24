@@ -40,9 +40,11 @@ LABELS = {
     "switch": "Identity switch", "frag": "Track fragmentation", "miss": "Missed detection",
     "split": "Split", "merge": "Merge", "fp": "False positive",
 }
-ORDER = ["switch", "frag", "miss", "split", "merge", "fp"]
-COMPONENTS = [("d_vanished", "Vanished"), ("d_displaced", "Displaced"), ("d_newcomer", "Newcomer"),
-              ("d_pwio", "Positional"), ("d_rc", "Rank corr.")]
+ORDER_ALL = ["switch", "frag", "miss", "split", "merge", "fp"]
+ORDER_NUCLEAR = ["switch", "frag", "miss", "fp"]        # errors that matter for a nuclear label
+COMPONENTS_ALL = [("d_vanished", "Vanished"), ("d_displaced", "Displaced"), ("d_newcomer", "Newcomer"),
+                  ("d_pwio", "Positional"), ("d_rc", "Rank corr.")]
+COMPONENTS_MAIN = [c for c in COMPONENTS_ALL if c[0] != "d_pwio"]
 
 plt.rcParams.update({
     "font.family": ["Helvetica Neue", "Helvetica", "Arial", "DejaVu Sans"],
@@ -78,16 +80,27 @@ def curve(df: pd.DataFrame, kind: str, src: str):
     return agg
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--all-types", action="store_true", help="six error types incl. split and merge")
+    p.add_argument("--positional", action="store_true", help="include the positional-overlap column")
+    a = p.parse_args(argv)
+    ORDER = ORDER_ALL if a.all_types else ORDER_NUCLEAR
+    COMPONENTS = COMPONENTS_ALL if a.positional else COMPONENTS_MAIN
+    ncol = 3 if a.all_types else 2
+    stem = "fig_ce_response_all" if a.all_types else "fig_ce_response"
+
     df = load()
     OUT.mkdir(exist_ok=True)
 
-    fig = plt.figure(figsize=(7.1, 4.6))
-    gs = fig.add_gridspec(2, 5, width_ratios=[1, 1, 1, 0.25, 1.55], wspace=0.45, hspace=0.6,
-                          left=0.07, right=0.985, top=0.9, bottom=0.12)
+    fig = plt.figure(figsize=(7.1 if a.all_types else 6.3, 4.6))
+    widths = [1] * ncol + [0.25, 1.55 if a.all_types else 1.35]
+    gs = fig.add_gridspec(2, ncol + 2, width_ratios=widths, wspace=0.45, hspace=0.6,
+                          left=0.08 if a.all_types else 0.09, right=0.985, top=0.93, bottom=0.19)
 
     # ---- panel a: small multiples -------------------------------------------------
-    axes = [fig.add_subplot(gs[r, c]) for r in range(2) for c in range(3)]
+    axes = [fig.add_subplot(gs[r, c]) for r in range(2) for c in range(ncol)]
     ymin = 0.0
     for ax, kind in zip(axes, ORDER):
         col = SERIES[kind]
@@ -109,22 +122,22 @@ def main() -> int:
     for i, ax in enumerate(axes):
         ax.set_ylim(np.floor(ymin / 5) * 5 - 1, 1)
         ax.set_yticks(np.arange(0, np.floor(ymin / 5) * 5 - 1, -5))
-        if i % 3:
+        if i % ncol:
             ax.tick_params(labelleft=False)
-        if i >= 3:
+        if i >= ncol:
             ax.set_xlabel("Cells affected (%)")
     axes[0].set_ylabel("Δ weighted identity overlap (×100)")
-    axes[3].set_ylabel("Δ weighted identity overlap (×100)")
+    axes[ncol].set_ylabel("Δ weighted identity overlap (×100)")
     # legend for the two line styles (identity of the panels is in the titles)
     from matplotlib.lines import Line2D
     handles = [Line2D([], [], color=INK2, lw=2, marker="o", ms=4.5, mec=SURFACE, mew=1.2, label="Real embryo (mean, 95% CI)"),
                Line2D([], [], color=INK2, lw=1.6, ls=(0, (3, 2)), label="Stage-matched simulations (mean, range)")]
-    fig.legend(handles=handles, loc="upper left", bbox_to_anchor=(0.07, 0.995), ncol=2, frameon=False,
-               handlelength=2.6, columnspacing=1.5)
+    fig.legend(handles=handles, loc="lower left", bbox_to_anchor=(0.08 if a.all_types else 0.09, 0.0),
+               ncol=2, frameon=False, handlelength=2.6, columnspacing=1.5)
     fig.text(0.01, 0.975, "a", fontsize=11, fontweight="bold", color=INK)
 
     # ---- panel b: fingerprint heat map ---------------------------------------------
-    axb = fig.add_subplot(gs[:, 4])
+    axb = fig.add_subplot(gs[:, ncol + 1])
     real10 = df[(df.src == "real") & (df.rate == 0.10)]
     M = np.array([[real10[real10.error == k][c].mean() * 100 for c, _ in COMPONENTS] for k in ORDER])
     vmax = np.nanmax(np.abs(M))
@@ -146,11 +159,12 @@ def main() -> int:
             axb.text(j, i, f"{v:+.0f}" if abs(v) >= 0.5 else "0", ha="center", va="center", fontsize=7.5,
                      color=("#ffffff" if lum < 0.55 else INK))
     axb.set_title("Decomposition at 10% error\n(real embryo, ×100)", loc="left", color=INK, pad=6)
-    fig.text(0.665, 0.975, "b", fontsize=11, fontweight="bold", color=INK)
+    bx = axb.get_position().x0 - 0.075
+    fig.text(bx, 0.975, "b", fontsize=11, fontweight="bold", color=INK)
 
     for ext in ("png", "pdf"):
-        fig.savefig(OUT / f"fig_ce_response.{ext}", dpi=300 if ext == "png" else None)
-    print("wrote", OUT / "fig_ce_response.png")
+        fig.savefig(OUT / f"{stem}.{ext}", dpi=300 if ext == "png" else None)
+    print("wrote", OUT / f"{stem}.png")
     return 0
 
 
