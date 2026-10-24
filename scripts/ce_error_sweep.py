@@ -157,7 +157,8 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
             measures.append(dict(seq=seq, frame=start + ti, n=n0, stage=stage_of(n0),
                                  nn_med=np.median(nn), nn_p10=np.percentile(nn, 10),
                                  disp_med=np.median(disp), disp_p90=np.percentile(disp, 90),
-                                 density=n0 / ConvexHull(pair[0]["positions"]).volume))
+                                 density=n0 / ConvexHull(pair[0]["positions"]).volume,
+                                 z_extent=float(np.ptp(pair[0]["positions"][:, 2]))))
             meta = dict(source=f"CE{seq}", pair=start + ti, n0=n0, stage=stage_of(n0))
             rows += sweep_pair(pair, box, a.k, a.cap, excluded[ti], rates, a.seeds, meta)
         print(f"CE {seq}: {len([r for r in rows if r['source'] == f'CE{seq}'])} rows in {time.time() - t0:.0f}s", flush=True)
@@ -166,12 +167,20 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
 
 # --------------------------------------------------------------------------- simulations
 
-def sim_config_from_stage(m: pd.Series, n_cells: int, seed: int) -> SimulationConfig:
-    side = float((n_cells / m.density) ** (1 / 3))
+def sim_config_from_stage(m: pd.Series, n_cells: int, seed: int, shape: str = "cube") -> SimulationConfig:
+    volume = n_cells / m.density
+    if shape == "slab":
+        # embryo thickness in z, widened in x and y to hold n_cells at the same density
+        depth = float(m.z_extent)
+        side = float(np.sqrt(volume / depth))
+        box = (side, side, depth)
+    else:
+        side = float(volume ** (1 / 3))
+        box = (side, side, side)
     floor = float(m.nn_p10)
     sd = float(max(0.1, 0.3 * (m.nn_med - m.nn_p10)))
     return SimulationConfig(
-        num_cells=n_cells, num_timepoints=2, seed=seed, box_size=(side, side, side),
+        num_cells=n_cells, num_timepoints=2, seed=seed, box_size=box,
         sampling=SamplingConfig(base_min_distance=floor, density_alpha=0.0, min_distance_sd=sd,
                                 max_attempts=200_000),
         motion=MotionConfig(dt=1.0, speed_mean=float(m.disp_med), speed_std=float(0.4 * m.disp_med),
@@ -182,28 +191,34 @@ def sim_config_from_stage(m: pd.Series, n_cells: int, seed: int) -> SimulationCo
 
 def run_sim(a, rates, measures: pd.DataFrame) -> list[dict]:
     rows = []
-    stage_means = measures.groupby("stage")[["nn_med", "nn_p10", "disp_med", "disp_p90", "density"]].mean()
+    stage_means = measures.groupby("stage")[["nn_med", "nn_p10", "disp_med", "disp_p90", "density", "z_extent"]].mean()
+    tag = "SIM-slab" if a.sim_shape == "slab" else "SIM"
     for _, _, stage in STAGES:
         if stage not in stage_means.index:
             continue
         m = stage_means.loc[stage]
         t0 = time.time()
         for seed in range(a.sim_seeds):
-            cfg = sim_config_from_stage(m, a.sim_cells, seed)
+            cfg = sim_config_from_stage(m, a.sim_cells, seed, shape=a.sim_shape)
             sim = simulate_sequence(cfg)
             pair = frames_from_array(sim.frames)
-            # border exclusion: cells within one spacing of a box face at either time
-            margin = float(m.nn_med)
             box = cfg.box_size
-            inside = lambda p: np.all((p > margin) & (p < np.asarray(box) - margin), axis=1)
-            keep = inside(pair[0]["positions"]) & inside(pair[1]["positions"])
-            excluded = set(pair[0]["assigned_ids"][~keep].tolist())
+            if a.sim_shape == "slab":
+                # like the embryo: surface cells are dropped by the Delaunay hull exclusion only
+                excluded: set[int] = set()
+            else:
+                # border exclusion: cells within one spacing of a box face at either time
+                margin = float(m.nn_med)
+                inside = lambda p: np.all((p > margin) & (p < np.asarray(box) - margin), axis=1)
+                keep = inside(pair[0]["positions"]) & inside(pair[1]["positions"])
+                excluded = set(pair[0]["assigned_ids"][~keep].tolist())
             realised_nn = median_nn(pair[0]["positions"])
-            meta = dict(source=f"SIM-{stage}", pair=seed, n0=a.sim_cells, stage=stage, sim_nn_med=realised_nn,
-                        sim_box=box[0])
+            meta = dict(source=f"{tag}-{stage}", pair=seed, n0=a.sim_cells, stage=stage, sim_nn_med=realised_nn,
+                        sim_box_x=box[0], sim_box_z=box[2])
             rows += sweep_pair(pair, box, a.k, a.cap, excluded, rates, 1, meta)
-        print(f"SIM {stage}: target spacing {m.nn_med:.2f}, realised {realised_nn:.2f} µm; "
-              f"box {box[0]:.1f} µm; {time.time() - t0:.0f}s", flush=True)
+        print(f"{tag} {stage}: target spacing {m.nn_med:.2f}, realised {realised_nn:.2f} µm; "
+              f"box {box[0]:.1f} x {box[1]:.1f} x {box[2]:.1f} µm "
+              f"({box[2] / m.nn_med:.1f} spacings thick); {time.time() - t0:.0f}s", flush=True)
     return rows
 
 
@@ -226,6 +241,8 @@ def main() -> int:
     p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,
                    help="error types to inject (default all)")
     p.add_argument("--sim", action="store_true", help="also run stage-matched simulations")
+    p.add_argument("--sim-shape", choices=("cube", "slab"), default="cube",
+                   help="slab: box depth = embryo z extent at that stage, same density")
     p.add_argument("--sim-cells", type=int, default=1000)
     p.add_argument("--sim-seeds", type=int, default=5)
     a = p.parse_args()
@@ -244,7 +261,7 @@ def main() -> int:
 
     pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
     print("\n### Stage measurements (means): spacing / displacement in µm, density in cells/µm³")
-    print(measures.groupby("stage")[["n", "nn_med", "nn_p10", "disp_med", "density"]].mean().to_string())
+    print(measures.groupby("stage")[["n", "nn_med", "nn_p10", "disp_med", "density", "z_extent"]].mean().to_string())
 
     err = df[df.error != "none"].copy()
     err["src"] = err.source.str.replace(r"CE0[12]", "CE", regex=True)
