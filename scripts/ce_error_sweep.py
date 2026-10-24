@@ -46,7 +46,7 @@ from tracking_validation.ctc import read_ctc_tracks  # noqa: E402
 from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, mask_cells  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
 
-ERROR_TYPES = ("miss", "fp", "switch", "merge", "split")
+ERROR_TYPES = ("miss", "fp", "switch", "frag", "merge", "split")   # filtered by --types
 METRIC_KEYS = {
     "wio": "weighted_identity_overlap", "pwio": "positional_weighted_identity_overlap",
     "rc": "rank_correlation", "prc": "penalised_rank_correlation",
@@ -74,6 +74,8 @@ def error_config(kind: str, rate: float, spacing: float) -> ErrorConfig:
         cfg["fp_rate"] = rate
     elif kind == "switch":
         cfg["p_switch"] = rate / 2.0          # two cells per event -> ~rate of cells affected
+    elif kind == "frag":
+        cfg["p_frag"] = rate
     elif kind == "merge":
         cfg["p_merge"] = rate / 2.0
     elif kind == "split":
@@ -220,12 +222,15 @@ def main() -> int:
     p.add_argument("--stride", type=int, default=4, help="use every n-th frame pair")
     p.add_argument("--seeds", type=int, default=3, help="error seeds per real pair")
     p.add_argument("--rates", type=float, nargs="+", default=[0.01, 0.02, 0.05, 0.10, 0.20])
+    p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,
+                   help="error types to inject (default all)")
     p.add_argument("--sim", action="store_true", help="also run stage-matched simulations")
     p.add_argument("--sim-cells", type=int, default=1000)
     p.add_argument("--sim-seeds", type=int, default=5)
     a = p.parse_args()
-    global MODE
+    global MODE, ERROR_TYPES
     MODE = a.mode
+    ERROR_TYPES = tuple(a.types)
 
     rows, measures = run_real(a, a.rates)
     if a.sim:

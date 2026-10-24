@@ -194,7 +194,7 @@ def test_combined_errors_keep_assigned_ids_unique_per_frame() -> None:
         assert len(set(ids)) == len(ids)
         assert o["positions"].shape == (len(ids), 3)
         assert o["true_ids"].shape == (len(ids),)
-    assert set(log) == {"missed", "merges", "splits", "false_positives", "switches"}
+    assert set(log) == {"missed", "merges", "splits", "false_positives", "fragmentations", "switches"}
 
 
 def test_error_config_rejects_nothing_but_runs_with_defaults() -> None:

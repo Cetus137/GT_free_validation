@@ -40,6 +40,9 @@ class ErrorConfig:
     fp_offset: float = 5.0          # distance scale for "near_cells" (position units)
     p_switch: float = 0.02      # per-cell per-frame ID switch probability
     switch_among_k: int = 3     # switches only with this many nearest spatial neighbours
+    p_frag: float = 0.0         # per-cell per-frame track fragmentation probability: a
+                                # cell present in the previous frame gets a fresh label
+                                # that persists (its track ends and a new one starts)
     p_merge: float = 0.0        # per-cell probability of merging with nearest neighbour
     p_split: float = 0.0        # per-cell probability of splitting into two detections
     split_distance: float = 5.0 # full separation between the two split detections
@@ -330,7 +333,55 @@ def _apply_false_positives(
     return result, fp_log, fp_id
 
 
-# --------------------------------------------------------------------------- 5a. same-frame switches
+# --------------------------------------------------------------------------- 5. fragmentation
+
+def _apply_fragmentations(
+    observed: list[dict],
+    p_frag: float,
+    frag_id_start: int,
+    rng: np.random.Generator,
+) -> tuple[list[dict], list[list[dict]], int]:
+    """Track fragmentation: a continuing cell is given a fresh label.
+
+    At each frame f >= 1, every detection whose ``true_id`` was present at f-1
+    (so a link into f was possible) is, with probability ``p_frag``, assigned a
+    new label.  The relabelling persists in later frames: the old track ends at
+    f-1 and a new track starts at f, as when a linker fails to connect two
+    detections of the same cell.  Frame 0 is never affected.  Synthetic
+    detections (``true_id < 0``) are not fragmented.
+    """
+    relabel: dict[int, int] = {}
+    frag_log: list[list[dict]] = []
+    result: list[dict] = []
+    frag_id = frag_id_start
+    prev_true: set[int] = set()
+
+    for frame_idx, frame in enumerate(observed):
+        true_ids = frame["true_ids"]
+        assigned = np.array([relabel.get(int(a), int(a)) for a in frame["assigned_ids"]], dtype=int)
+        frame_frags: list[dict] = []
+        if frame_idx > 0 and p_frag > 0.0:
+            for i in range(len(assigned)):
+                t = int(true_ids[i])
+                if t < 0 or t not in prev_true or rng.random() >= p_frag:
+                    continue
+                old = int(assigned[i])
+                assigned[i] = frag_id
+                # every original label currently shown as `old` is shown as frag_id from now on
+                srcs = [k for k, v in relabel.items() if v == old] + ([old] if old not in relabel else [])
+                for k in srcs:
+                    relabel[k] = frag_id
+                frame_frags.append({"frame": frame_idx, "true_id": t,
+                                    "old_assigned_id": old, "new_assigned_id": frag_id})
+                frag_id += 1
+        frag_log.append(frame_frags)
+        result.append({**frame, "assigned_ids": assigned})
+        prev_true = {int(t) for t in true_ids if int(t) >= 0}
+
+    return result, frag_log, frag_id
+
+
+# --------------------------------------------------------------------------- 6a. same-frame switches
 
 def _apply_id_switches(
     observed: list[dict],
@@ -373,7 +424,7 @@ def _apply_id_switches(
     return result, switch_log
 
 
-# --------------------------------------------------------------------------- 5b. cross-frame switches
+# --------------------------------------------------------------------------- 6b. cross-frame switches
 
 def _apply_id_switches_cross_frame(
     observed: list[dict],
@@ -459,10 +510,12 @@ def apply_tracking_errors(
         2. Merges                — nearby pairs collapsed to one midpoint detection
         3. Splits                — detections duplicated into two nearby ones
         4. False positives       — spurious detections added
-        5. ID switches           — assigned IDs swapped (same-frame or cross-frame rule)
+        5. Fragmentations        — a continuing cell gets a fresh label (persistent)
+        6. ID switches           — assigned IDs swapped (same-frame or cross-frame rule)
 
-    Split and FP IDs are allocated from one counter starting above the largest
-    existing ``assigned_id``, so synthetic IDs never collide with real ones.
+    Split, FP and fragmentation IDs are allocated from one counter starting
+    above the largest existing ``assigned_id``, so synthetic IDs never collide
+    with real ones.
 
     Two ID-switch rules are available (``config.max_switch_distance``):
 
@@ -489,8 +542,8 @@ def apply_tracking_errors(
         List of T dicts with ``positions``, ``true_ids`` (-1 = false positive,
         -2 = merged), ``assigned_ids`` and the carried extra arrays.
     error_log:
-        ``missed``, ``merges``, ``splits``, ``false_positives``, ``switches``:
-        flat lists of event dicts, each with a ``frame`` key.
+        ``missed``, ``merges``, ``splits``, ``false_positives``, ``fragmentations``,
+        ``switches``: flat lists of event dicts, each with a ``frame`` key.
     """
     clean = _as_frames(frames)
     next_id = int(max((int(f["assigned_ids"].max()) for f in clean if len(f["assigned_ids"])), default=-1)) + 1
@@ -501,10 +554,11 @@ def apply_tracking_errors(
         observed, config.p_merge, merge_id_start=next_id, rng=rng, start_frame=start)
     observed, split_log, next_id = _apply_splits(
         observed, config.p_split, config.split_distance, split_id_start=next_id, rng=rng, start_frame=start)
-    observed, fp_log, _ = _apply_false_positives(
+    observed, fp_log, next_id = _apply_false_positives(
         observed, config.lambda_fp, box_size, fp_id_start=next_id, rng=rng,
         fp_rate=config.fp_rate, fp_placement=config.fp_placement, fp_offset=config.fp_offset,
         start_frame=start)
+    observed, frag_log, _ = _apply_fragmentations(observed, config.p_frag, frag_id_start=next_id, rng=rng)
     if config.max_switch_distance is None:
         observed, switch_log = _apply_id_switches(observed, config.p_switch, config.switch_among_k, rng)
     else:
@@ -516,6 +570,7 @@ def apply_tracking_errors(
         "merges": [ev for evs in merge_log for ev in evs],
         "splits": [ev for evs in split_log for ev in evs],
         "false_positives": [fp for fps in fp_log for fp in fps],
+        "fragmentations": [fr for frs in frag_log for fr in frs],
         "switches": [sw for sws in switch_log for sw in sws],
     }
     return observed, error_log
@@ -530,7 +585,7 @@ def realised_error_rates(clean, observed: list[dict], error_log: dict,
     ``switch``: cells involved (2 per event) / clean detections in frames 1..T-1,
     because a switch is a wrong link INTO a frame and the first frame has none;
     under the same-frame rule, which also fires in frame 0, the denominator is
-    all frames.
+    all frames.  ``frag``: fragmentation events / clean detections in frames 1..T-1.
 
     With ``first_frame_clean`` (``first_frame_clean=True`` passed here), the
     denominator for every type is the detections in frames 1..T-1, since frame 0
@@ -541,13 +596,14 @@ def realised_error_rates(clean, observed: list[dict], error_log: dict,
     n_later = sum(len(f["assigned_ids"]) for f in clean[1:]) if len(clean) > 1 else n_all
     n_det = n_later if first_frame_clean else n_all
     if n_det == 0:
-        return {k: float("nan") for k in ("miss", "fp", "switch", "merge", "split")}
+        return {k: float("nan") for k in ("miss", "fp", "switch", "frag", "merge", "split")}
     switch_in_frame0 = any(ev["frame"] == 0 for ev in error_log["switches"])
     n_switchable = n_all if (switch_in_frame0 or len(clean) == 1) else n_later
     return {
         "miss":   len(error_log["missed"]) / n_det,
         "fp":     len(error_log["false_positives"]) / n_det,
         "switch": 2 * len(error_log["switches"]) / n_switchable if n_switchable else float("nan"),
+        "frag":   len(error_log.get("fragmentations", [])) / n_later if n_later else float("nan"),
         "merge":  2 * len(error_log["merges"]) / n_det,
         "split":  len(error_log["splits"]) / n_det,
     }
