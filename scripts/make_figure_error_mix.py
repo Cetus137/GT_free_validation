@@ -138,17 +138,28 @@ def pairs_figure(single: pd.DataFrame) -> None:
     print("wrote", OUT / "fig_error_mix_pairs.png")
 
 
-def main() -> int:
+def main(argv=None) -> int:
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--tag", default="", help="result-file / figure suffix, e.g. _knn")
+    p.add_argument("--label", default="", help="text appended to panel-a subtitle, e.g. 'kNN neighbourhoods'")
+    a = p.parse_args(argv)
     OUT.mkdir(exist_ok=True)
-    main_figure(pd.read_csv(RESULTS / "error_mix_validation_on_sweep.csv"),
-                pd.read_csv(RESULTS / "error_mix_validation_pooled.csv"))
-    pairs_figure(pd.read_csv(RESULTS / "error_mix_validation.csv"))
-    low_sweep = RESULTS / "error_mix_low_on_sweep.csv"
-    low_pooled = RESULTS / "error_mix_low_pooled.csv"
+    extra = f", {a.label}" if a.label else ""
+    main_fp = RESULTS / f"error_mix_validation{a.tag}_on_sweep.csv"
+    if main_fp.exists():
+        main_figure(pd.read_csv(main_fp), pd.read_csv(RESULTS / f"error_mix_validation{a.tag}_pooled.csv"),
+                    stem=f"fig_error_mix{a.tag}",
+                    subtitle_a="One error type injected alone into real embryo frame pairs, global baseline" + extra)
+    pairs_fp = RESULTS / f"error_mix_validation{a.tag}.csv"
+    if pairs_fp.exists():
+        pairs_figure(pd.read_csv(pairs_fp))
+    low_sweep = RESULTS / f"error_mix_low{a.tag}_on_sweep.csv"
+    low_pooled = RESULTS / f"error_mix_low{a.tag}_pooled.csv"
     if low_sweep.exists() and low_pooled.exists():
         main_figure(pd.read_csv(low_sweep), pd.read_csv(low_pooled), lim=2.3, ticks=(0, 0.5, 1, 1.5, 2),
-                    stem="fig_error_mix_low",
-                    subtitle_a="Low rates: one error type injected alone into real embryo frame pairs, global baseline")
+                    stem=f"fig_error_mix_low{a.tag}",
+                    subtitle_a="Low rates: one error type injected alone into real embryo frame pairs, global baseline" + extra)
     return 0
 
 

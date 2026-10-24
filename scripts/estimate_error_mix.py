@@ -93,7 +93,7 @@ def validate(a, A, noise, baseline, types):
         counts = data.counts()
         start = int(np.argmax(counts >= 50))
         frames = data.frames[start:]
-        excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode="delaunay")
+        excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode=sweep.MODE)
         hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         # held-out pairs: the ones the stride-4 calibration sweep did NOT use
         candidates = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]
@@ -141,7 +141,7 @@ def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: fl
         data = inherit_parent_labels(sweep.load_ce(a.data_root, a.cache, seq), prefer="nearest")
         start = int(np.argmax(data.counts() >= 50))
         frames = data.frames[start:]
-        excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode="delaunay")
+        excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode=sweep.MODE)
         hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         held = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]
         pairs = rng.choice(held, size=n_pairs, replace=False)
@@ -207,6 +207,8 @@ def main() -> int:
     p.add_argument("--cache", type=Path, default=ROOT / "data" / "_cache")
     p.add_argument("--out", type=Path, default=ROOT / "data" / "_results" / "error_mix_validation.csv")
     p.add_argument("--cap", type=float, default=15.0)
+    p.add_argument("--mode", choices=("delaunay", "knn"), default="delaunay",
+                   help="neighbourhood definition; must match the sweep the calibration comes from")
     p.add_argument("--n-mixtures", type=int, default=60)
     p.add_argument("--max-rate", type=float, default=0.06, help="each type's rate ~ U(0, max_rate)")
     p.add_argument("--sparse", action="store_true", help="half the mixtures have one dominant type")
@@ -218,7 +220,7 @@ def main() -> int:
     p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
-    sweep.MODE = "delaunay"
+    sweep.MODE = a.mode
     types = TYPES_6 if a.six else TYPES_4
 
     A, noise, baseline = calibrate(a.sweep, types)
