@@ -87,6 +87,8 @@ class CTCTracks:
                                                                 # [begin, end] with no marker
     unlisted: list[tuple[int, int]] = field(default_factory=list)  # (label, frame) marker
                                                                    # present but not in table
+    label_map: dict[int, int] | None = None  # original -> final label after
+                                             # lineage.inherit_parent_labels
 
     @property
     def num_frames(self) -> int:
