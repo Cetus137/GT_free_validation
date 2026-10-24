@@ -210,6 +210,7 @@ def run_sim(a, rates, measures: pd.DataFrame) -> list[dict]:
 # --------------------------------------------------------------------------- main
 
 def main() -> int:
+    global MODE, ERROR_TYPES
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", type=Path, default=ROOT / "data")
     p.add_argument("--cache", type=Path, default=ROOT / "data" / "_cache")
@@ -228,7 +229,6 @@ def main() -> int:
     p.add_argument("--sim-cells", type=int, default=1000)
     p.add_argument("--sim-seeds", type=int, default=5)
     a = p.parse_args()
-    global MODE, ERROR_TYPES
     MODE = a.mode
     ERROR_TYPES = tuple(a.types)
 
