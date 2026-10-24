@@ -34,9 +34,14 @@ def draw_cell_motion_params(
         # log-normal: median = exp(mu) = speed_mean  →  mu = ln(speed_mean)
         mu = np.log(max(speed_mean, 1e-6))
         speeds = rng.lognormal(mean=mu, sigma=speed_lognorm_sigma, size=num_cells)
-    else:
+    elif speed_distribution == "normal":
         speeds = rng.normal(loc=speed_mean, scale=speed_std, size=num_cells)
         speeds = np.clip(speeds, 1e-6, None)
+    else:
+        raise ValueError(
+            f"Unknown speed_distribution {speed_distribution!r}; "
+            "expected 'normal' or 'lognormal'"
+        )
     persistence = rng.beta(a=persistence_alpha, b=persistence_beta, size=num_cells)
     persistence = np.clip(persistence, 1e-3, 0.999)
     return speeds, persistence

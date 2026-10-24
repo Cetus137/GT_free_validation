@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tracking-validation"
-version = "0.2.0"
+version = "0.3.0"
 description = "Simulated 3D cell tissues, injected tracking errors, and neighbourhood-continuity metrics (WIO, RC, track survival)"
 readme = "README.md"
 requires-python = ">=3.10"

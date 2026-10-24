@@ -21,3 +21,25 @@ pytest -q
 
 Copied from `tracking_validation` on 2026-10-24 (working-tree state, including the
 soft-floor sampler, cross-frame ID switches and the extra WIO-loss metrics).
+
+## Changes since the copy (0.3.0)
+
+Behaviour changes — results for a given seed differ from 0.2.0 where noted:
+
+- **Sampler** `exact_min_distance` now defaults to `True`, so `base_min_distance` is
+  actually enforced. Previously ~0.3% of cells could be closer than the floor.
+  Changes frame 0 for every seed. Pass `exact_min_distance=False` to reproduce old runs.
+- **Metrics** `penalise_absence=True` with `border_margin > 0` no longer zeroes WIO for
+  cells that are still tracked at t1 but drifted into the border band (they are
+  excluded as before, not penalised).
+- **Metrics** `penalised_rank_correlation` now uses average ranks for tied penalty
+  ranks (correct Spearman with ties). `rank_correlation` is unchanged (no ties there).
+- `MotionConfig(speed_distribution=...)` raises on an unknown value instead of silently
+  falling back to `"normal"`.
+
+Housekeeping: removed the unused topological-RC code path and its
+`successor_distance_factor` parameter, removed duplicated unused helpers, silenced
+spurious divide warnings, documented the two ID-switch rules and their effective
+rates, and added tests for `errors.py`, the sampler paths and config validation.
+`pytest` now always imports this repo's `src/`, even if another copy of the package
+is installed in the environment.

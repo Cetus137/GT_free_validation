@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.spatial import Delaunay, KDTree
 from scipy.spatial import QhullError
+from scipy.stats import rankdata
 
 # vertex-pair indices for all 6 edges of a tetrahedron
 _SIMPLEX_PAIRS = ((0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3))
@@ -27,18 +28,6 @@ def border_interior_mask(
     """
     box = np.asarray(box_size, dtype=float)
     return np.all((positions > margin) & (positions < box - margin), axis=1)
-
-
-def _pairwise_distances(positions: np.ndarray) -> np.ndarray:
-    """Return (n, n) matrix of Euclidean distances, diagonal set to inf.
-
-    Retained for use in errors.py where the full matrix is needed for
-    small per-frame cell counts (N < ~200). For large N use KDTree instead.
-    """
-    diffs = positions[:, None, :] - positions[None, :, :]
-    dists = np.linalg.norm(diffs, axis=-1)
-    np.fill_diagonal(dists, np.inf)
-    return dists
 
 
 def compute_neighbour_ranks(positions: np.ndarray, k: int) -> np.ndarray:
@@ -183,112 +172,23 @@ def _delaunay_neighbour_ranks_and_distances(
     return ranks_out, dists_out
 
 
-def _spearman(x: list[int], y: list[int]) -> float:
-    """Spearman rank correlation for two small integer lists."""
+def _spearman(x, y) -> float:
+    """Spearman rank correlation of two equal-length sequences.
+
+    Ties receive average ranks (so the result is the Pearson correlation of the
+    rank vectors, which is the correct Spearman definition in the presence of
+    ties).  Without ties this equals the classic ``1 - 6 Σd² / (n(n²-1))``.
+    Returns NaN for fewer than 2 entries or when either rank vector is constant.
+    """
     n = len(x)
     if n < 2:
         return float("nan")
-    rx = np.argsort(np.argsort(x)).astype(float)
-    ry = np.argsort(np.argsort(y)).astype(float)
-    d = rx - ry
-    return float(1.0 - 6.0 * np.sum(d ** 2) / (n * (n ** 2 - 1)))
-
-
-def _topological_rank_correlation_cell(
-    neighbours0: list[int],
-    dists0: list[float],
-    neighbours1: list[int],
-    id_to_pos0: dict[int, np.ndarray],
-    pos_i_t0: np.ndarray,
-    successor_distance_factor: float,
-) -> float:
-    """Per-cell Topologically-corrected Rank Correlation (TRC).
-
-    Standard RC only uses cells that are neighbours at both t0 and t1.  Cells
-    lost from the neighbourhood (biological T1-like exchanges) simply shrink
-    the intersection, which degrades RC even when tracking is perfect.
-
-    TRC instead:
-    - For each lost neighbour j, searches the *gained* set for a geometrically
-      coherent successor c: a cell that (a) existed at t0, and (b) was already
-      within ``max(dists0) * successor_distance_factor`` of i at t0 — i.e. it
-      was lurking just outside the Voronoi boundary and moved in when j moved
-      out.  If found, c's rank at t1 substitutes for j's rank, absorbing the
-      biological topology change without penalty.
-    - Lost neighbours with no coherent successor (tracking errors: misses,
-      switches, FP-induced ejections) receive a penalty rank beyond the last
-      valid rank, pulling the correlation down.
-
-    The key criterion is the distance from i to c at t0 (not from j to c).
-    This correctly handles T1-like exchanges where j and c may be on opposite
-    sides of i — what matters is that c was already within i's neighbourhood
-    shell, not that j and c were spatially adjacent.
-
-    Parameters
-    ----------
-    neighbours0 : list of assigned_ids, sorted by distance from cell i at t0
-    dists0      : corresponding distances at t0
-    neighbours1 : list of assigned_ids, sorted by distance from cell i at t1
-    id_to_pos0  : {assigned_id: position (3,)} for all cells present at t0
-    pos_i_t0    : position of cell i at t0, used to compute d(i, c, t0)
-    successor_distance_factor : threshold = max(dists0) * this factor;
-                                c must be within threshold of i at t0
-
-    Returns
-    -------
-    float in [-1, 1], or nan if fewer than 2 comparable entries exist.
-    """
-    if len(neighbours0) < 2:
+    rx = rankdata(x) - (n + 1) / 2.0
+    ry = rankdata(y) - (n + 1) / 2.0
+    denom = float(np.sqrt(np.sum(rx ** 2) * np.sum(ry ** 2)))
+    if denom == 0.0:
         return float("nan")
-
-    set0 = set(neighbours0)
-    set1 = set(neighbours1)
-    lost   = [j for j in neighbours0 if j not in set1]
-    gained = [c for c in neighbours1 if c not in set0]
-
-    # Precompute t1 index lookup for O(1) rank retrieval
-    index1 = {c: idx for idx, c in enumerate(neighbours1)}
-
-    # threshold: c must have been within this distance of i at t0
-    threshold = max(dists0) * successor_distance_factor if dists0 else 0.0
-
-    # For each lost j, find the gained c closest to i at t0 (within threshold)
-    # c must have existed at t0 (in id_to_pos0); FPs/new cells are not valid
-    substitutions: dict[int, int] = {}   # lost_id -> gained_id
-    used: set[int] = set()
-    for j in lost:
-        best_c, best_d = None, threshold
-        for c in gained:
-            if c in used:
-                continue
-            pos_c = id_to_pos0.get(c)
-            if pos_c is None:
-                # c did not exist at t0 (FP or division) → not a biological successor
-                continue
-            d_i_c = float(np.linalg.norm(pos_i_t0 - pos_c))
-            if d_i_c < best_d:
-                best_d = d_i_c
-                best_c = c
-        if best_c is not None:
-            substitutions[j] = best_c
-            used.add(best_c)
-
-    # penalty: one rank beyond the last valid position at t1
-    penalty_rank = len(neighbours1)
-
-    r_t0: list[int] = []
-    r_t1: list[int] = []
-    for rank0, j in enumerate(neighbours0):
-        r_t0.append(rank0)
-        if j in set1:
-            r_t1.append(index1[j])
-        elif j in substitutions:
-            r_t1.append(index1[substitutions[j]])
-        else:
-            # no geometric successor → tracking error → penalty
-            r_t1.append(penalty_rank)
-
-    return _spearman(r_t0, r_t1)
+    return float(np.sum(rx * ry) / denom)
 
 
 def neighbour_identity_overlap(
@@ -313,8 +213,7 @@ def neighbour_identity_overlap(
     matches = (ranks_t0[:, :, None] == ranks_t1[:, None, :]) \
               & valid_t0[:, :, None] & valid_t1[:, None, :]  # (N, k, k)
     shared  = matches.any(axis=2).sum(axis=1).astype(float)  # (N,)
-    result  = np.where(k_eff > 0, shared / k_eff, np.nan)
-    return result
+    return np.divide(shared, k_eff, out=np.full(n, np.nan), where=k_eff > 0)
 
 
 def weighted_neighbour_identity_overlap(
@@ -349,7 +248,7 @@ def weighted_neighbour_identity_overlap(
     w = 1.0 / np.clip(dists_t0, 1e-9, None)                      # (N, k)
     w = w * valid_t0                                               # zero out sentinels
     row_sum = w.sum(axis=1, keepdims=True)
-    w = np.where(row_sum > 0, w / row_sum, 0.0)                   # normalise
+    w = np.divide(w, row_sum, out=np.zeros_like(w), where=row_sum > 0)   # normalise
     matches = (ranks_t0[:, :, None] == ranks_t1[:, None, :]) \
               & valid_t0[:, :, None] & valid_t1[:, None, :]       # (N, k, k)
     in_t1   = matches.any(axis=2)                                  # (N, k)
@@ -379,12 +278,9 @@ def neighbour_rank_correlation(
               & valid_t0[:, :, None] & valid_t1[:, None, :]       # (N, k, k)
     for i in range(n):
         j0s, j1s = np.where(matches[i])
-        n_sh = len(j0s)
-        if n_sh < 2:
+        if len(j0s) < 2:
             continue
-        d = np.argsort(np.argsort(j0s)).astype(float) - \
-            np.argsort(np.argsort(j1s)).astype(float)
-        correlations[i] = 1.0 - 6.0 * np.sum(d ** 2) / (n_sh * (n_sh ** 2 - 1))
+        correlations[i] = _spearman(j0s, j1s)
     return correlations
 
 
@@ -509,7 +405,6 @@ def compute_neighbour_continuity_observed(
     penalise_absence: bool = False,
     neighbourhood_mode: str = "knn",
     max_delaunay_degree: int | None = None,
-    successor_distance_factor: float = 1.0,
     displacement_sigma: float = 5.0,
     extra_metrics: bool = False,
 ) -> dict[str, object]:
@@ -558,13 +453,6 @@ def compute_neighbour_continuity_observed(
         that grades off near zero by ~15 µm).  A missed cell contributes ~0 because
         the nearest t1 cell is many µm away; an ID-switched cell contributes ~1
         because a cell still exists at approximately j's position.
-    successor_distance_factor:
-        Controls the search radius for topological successors when computing
-        ``topological_rank_correlation``.  For each lost neighbour j, a gained
-        cell c qualifies as a biological successor only if its position at t0
-        was within ``median(dists0) * successor_distance_factor`` of j's t0
-        position.  Smaller values are stricter (fewer exchanges classed as
-        biological); larger values are more permissive.  Default 1.0.
     extra_metrics:
         If True, also return three neighbourhood metrics that split WIO's loss
         by the fate of each lost neighbour, plus its mirror image (off by default):
@@ -584,10 +472,13 @@ def compute_neighbour_continuity_observed(
     -------
     dict with keys:
         ``weighted_identity_overlap``    (T-1, n_ids) — inverse-distance weighted
-        ``rank_correlation``             (T-1, n_ids) — Spearman rho
-        ``topological_rank_correlation``      (T-1, n_ids) — TRC: RC with biological
-                                             neighbourhood exchanges absorbed via
-                                             geometric successor matching
+        ``rank_correlation``             (T-1, n_ids) — Spearman rho over neighbours
+                                             shared at both timepoints
+        ``penalised_rank_correlation``   (T-1, n_ids) — PRC: Spearman rho over ALL t0
+                                             neighbours, where a neighbour absent at
+                                             t1 receives a penalty rank proportional
+                                             to how close it was at t0 (ties get
+                                             average ranks)
         ``positional_weighted_identity_overlap`` (T-1, n_ids) — PWIO: like WIO but
                                              neighbours matched by position at t1
                                              rather than by ID; immune to switches,
@@ -618,7 +509,7 @@ def compute_neighbour_continuity_observed(
     weighted_identity    = np.full((t - 1, n_ids), np.nan)
     positional_wio       = np.full((t - 1, n_ids), np.nan)
     correlation          = np.full((t - 1, n_ids), np.nan)
-    trc_correlation      = np.full((t - 1, n_ids), np.nan)
+    prc_correlation      = np.full((t - 1, n_ids), np.nan)
     track_survival       = np.full(t - 1, np.nan)
     two_sigma_sq         = 2.0 * displacement_sigma ** 2
     if extra_metrics:
@@ -786,13 +677,13 @@ def compute_neighbour_continuity_observed(
                         weight  = max(0.0, 1.0 - d / ref_dist)
                         penalty = n_valid0 + round(weight * (max(n_valid0, n1) - n_valid0))
                         ranks_t1.append(penalty)
-                trc_correlation[ti, col] = _spearman(ranks_t0, ranks_t1)
+                prc_correlation[ti, col] = _spearman(ranks_t0, ranks_t1)
 
     out = {
         "weighted_identity_overlap":             weighted_identity,
         "positional_weighted_identity_overlap":  positional_wio,
         "rank_correlation":                      correlation,
-        "penalised_rank_correlation":            trc_correlation,
+        "penalised_rank_correlation":            prc_correlation,
         "cell_ids":                              np.array(all_ids),
         "track_survival":                        track_survival,
     }

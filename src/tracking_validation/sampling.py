@@ -22,7 +22,7 @@ def sample_centroids_poisson_jittered(
     oversample_factor: float,
     max_attempts: int,
     rng: np.random.Generator,
-    exact_min_distance: bool = False,
+    exact_min_distance: bool = True,
     min_distance_sd: float = 0.0,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Sample cell centroids via jittered Poisson-disk sampling.
@@ -32,11 +32,11 @@ def sample_centroids_poisson_jittered(
     incrementally.  When density_alpha > 0 the adaptive radius rule is applied
     per candidate (slower, but density_alpha > 0 is only used for small N).
 
-    ``exact_min_distance`` (default False, kept so earlier runs reproduce): the fast
-    path's KDTree is only rebuilt every ``rebuild_interval`` acceptances, so by
-    default candidates are NOT checked against cells accepted since the last rebuild
-    and pairs closer than ``base_min_distance`` slip through.  True also checks those
-    recent cells, so the minimum distance is actually enforced.
+    ``exact_min_distance`` (default True): the fast path's KDTree is only rebuilt
+    every ``rebuild_interval`` acceptances, so candidates must additionally be
+    checked against cells accepted since the last rebuild.  Pass False to reproduce
+    pre-0.3 runs, where that check was skipped and roughly 0.3% of cells ended up
+    closer than ``base_min_distance`` to a neighbour.
 
     ``min_distance_sd`` (default 0 = off): soft floor.  Each candidate draws its own
     minimum distance r ~ Normal(base_min_distance, min_distance_sd), truncated below

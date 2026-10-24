@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+SPEED_DISTRIBUTIONS = ("normal", "lognormal")
+
 
 @dataclass(slots=True)
 class SamplingConfig:
@@ -11,9 +13,11 @@ class SamplingConfig:
     jitter_fraction: float = 0.35
     oversample_factor: float = 3.0
     max_attempts: int = 20000
-    exact_min_distance: bool = False   # True: enforce base_min_distance against every
-                                       # accepted cell (fixes sampler letting close pairs
-                                       # through); False keeps earlier runs reproducible
+    exact_min_distance: bool = True    # True (default): base_min_distance is enforced
+                                       # against every accepted cell. False reproduces
+                                       # pre-0.3 runs, where cells accepted since the last
+                                       # KDTree rebuild were not checked and ~0.3% of
+                                       # pairs ended up closer than base_min_distance.
     min_distance_sd: float = 0.0       # >0: soft floor, per-cell min distance drawn from
                                        # Normal(base_min_distance, sd); 0 = hard floor
 
@@ -34,6 +38,13 @@ class MotionConfig:
     #               Fitted from real data: sigma=0.751, median≈5.0
     speed_distribution: str = "normal"
     speed_lognorm_sigma: float = 0.751  # shape param σ from log-normal fit to real data
+
+    def __post_init__(self) -> None:
+        if self.speed_distribution not in SPEED_DISTRIBUTIONS:
+            raise ValueError(
+                f"Unknown speed_distribution {self.speed_distribution!r}; "
+                f"expected one of {SPEED_DISTRIBUTIONS}"
+            )
 
 
 @dataclass(slots=True)

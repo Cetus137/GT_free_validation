@@ -21,13 +21,6 @@ class ErrorConfig:
                                               # original same-frame k-nearest swaps
 
 
-def _pairwise_distances(positions: np.ndarray) -> np.ndarray:
-    diffs = positions[:, None, :] - positions[None, :, :]
-    dists = np.linalg.norm(diffs, axis=-1)
-    np.fill_diagonal(dists, np.inf)
-    return dists
-
-
 def _apply_missed_segmentations(
     frames: np.ndarray,
     p_miss: float,
@@ -73,7 +66,10 @@ def _apply_merges(
     """
     merge_log: list[list[dict]] = []
     result: list[dict] = []
-    merge_id = merge_id_start  # kept for API compatibility; no longer consumed
+    # ``merge_id_start`` is returned unchanged: merged detections reuse a parent's
+    # assigned_id and allocate no fresh IDs.  Kept in the signature because callers
+    # pass it and chain the returned value into ``_apply_splits``.
+    merge_id = merge_id_start
 
     for frame_idx, frame in enumerate(observed):
         positions    = frame["positions"]
@@ -392,8 +388,21 @@ def apply_tracking_errors(
         4. False positives       — random spurious detections added
         5. ID switches           — assigned IDs swapped between spatial neighbours
 
-    Merge and split IDs are allocated before FP IDs so all synthetic detection
-    IDs are globally unique.
+    Split and FP IDs are allocated from a single counter starting at N so all
+    synthetic detection IDs are globally unique.
+
+    Two ID-switch rules are available (``config.max_switch_distance``):
+
+    * ``None`` (same-frame rule): at every frame, each cell swaps labels with one
+      of its ``switch_among_k`` nearest neighbours with probability ``p_switch``.
+      Swaps are NOT persistent: labels revert at the next frame, so one event is
+      a switch followed by a switch-back.  Over a single frame pair the rule
+      fires in both frames, so the fraction of cells with a label change across
+      the jump is roughly ``4 * p_switch`` (two rounds, two cells per event).
+    * a distance (cross-frame rule): switches are decided after the cells have
+      moved, require both mis-links to be within the cap, and persist for the
+      rest of the sequence, as a real tracker's wrong link would.  Across one
+      jump the label-change fraction is roughly ``2 * p_switch``.
 
     Parameters
     ----------
