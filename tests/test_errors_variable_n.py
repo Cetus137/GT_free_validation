@@ -163,6 +163,7 @@ def test_realised_rates_match_logs():
     n = 210
     assert r["miss"] == pytest.approx(len(log["missed"]) / n)
     assert r["fp"] == pytest.approx(len(log["false_positives"]) / n)
-    assert r["switch"] == pytest.approx(2 * len(log["switches"]) / n)
+    # cross-frame switches can only occur in frames 1..T-1 (70 + 80 cells)
+    assert r["switch"] == pytest.approx(2 * len(log["switches"]) / 150)
     assert r["merge"] == pytest.approx(2 * len(log["merges"]) / n)
     assert r["split"] == pytest.approx(len(log["splits"]) / n)

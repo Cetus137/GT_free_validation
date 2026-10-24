@@ -513,17 +513,23 @@ def realised_error_rates(clean, observed: list[dict], error_log: dict) -> dict[s
     """Events per clean detection, pooled over frames: what actually happened.
 
     ``miss``: dropped detections / clean detections.  ``fp``: added / clean.
-    ``switch``: cells involved (2 per event) / clean.  ``merge``: cells involved
-    (2 per event) / clean.  ``split``: split events / clean.
+    ``merge``: cells involved (2 per event) / clean.  ``split``: split events / clean.
+    ``switch``: cells involved (2 per event) / clean detections in frames 1..T-1,
+    because a switch is a wrong link INTO a frame and the first frame has none;
+    under the same-frame rule, which also fires in frame 0, the denominator is
+    all frames.
     """
     clean = _as_frames(clean)
     n_clean = sum(len(f["assigned_ids"]) for f in clean)
     if n_clean == 0:
         return {k: float("nan") for k in ("miss", "fp", "switch", "merge", "split")}
+    switch_in_frame0 = any(ev["frame"] == 0 for ev in error_log["switches"])
+    n_switchable = n_clean if (switch_in_frame0 or len(clean) == 1) else \
+        sum(len(f["assigned_ids"]) for f in clean[1:])
     return {
         "miss":   len(error_log["missed"]) / n_clean,
         "fp":     len(error_log["false_positives"]) / n_clean,
-        "switch": 2 * len(error_log["switches"]) / n_clean,
+        "switch": 2 * len(error_log["switches"]) / n_switchable if n_switchable else float("nan"),
         "merge":  2 * len(error_log["merges"]) / n_clean,
         "split":  len(error_log["splits"]) / n_clean,
     }
