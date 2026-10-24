@@ -221,6 +221,9 @@ def main() -> int:
     p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
     p.add_argument("--outliers", action="store_true",
                    help="add the per-cell outlier-fraction channels (requires sweeps that record them)")
+    p.add_argument("--outlier-calib", type=Path, default=None,
+                   help="sweep CSV (e.g. the low-rate one) used to calibrate ONLY the outlier channels; "
+                        "the count channels saturate, so fit them where the estimator will be used")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
     sweep.MODE = a.mode
@@ -229,6 +232,11 @@ def main() -> int:
         CHANNELS.extend(c for c in OUTLIER_CHANNELS if c not in CHANNELS)
 
     A, noise, baseline = calibrate(a.sweep, types)
+    if a.outliers and a.outlier_calib is not None:
+        A_low, _, _ = calibrate(a.outlier_calib, types)
+        for ch in OUTLIER_CHANNELS:
+            A.loc[ch] = A_low.loc[ch]
+        print(f"outlier channels calibrated on {a.outlier_calib.name}")
     pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
     print("### Response matrix: metric change (x100) per 1% of cells affected")
     print((A * 100 / 100).round(3).to_string())
