@@ -14,6 +14,18 @@ Two things, nothing else:
 Positions are in whatever unit you pass in; every distance parameter (neighbour cap,
 border margin, split distance, switch cap) is in that same unit.
 
+**Real ground truth.** `read_ctc_tracks` reads a Cell Tracking Challenge tracking
+folder (`01_GT/TRA`, `01_ST/TRA` or `01_RES`) into the same per-frame format, with
+centroids scaled to microns and a `parent_ids` field for divisions:
+
+```bash
+pip install -e ".[ctc]"
+python -m tracking_validation.ctc Fluo-N3DH-CE/01_GT/TRA --dataset Fluo-N3DH-CE --out ce01.csv
+```
+
+The metrics do not yet account for divisions; see
+[docs/division_policy.md](docs/division_policy.md) for the proposed policy.
+
 ```bash
 pip install -e ".[dev]"
 pytest -q

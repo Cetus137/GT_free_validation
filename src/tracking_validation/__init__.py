@@ -1,5 +1,6 @@
 """Simulated 3D cell tissues, injected tracking errors, and neighbourhood-continuity metrics."""
 from .config import ConstraintConfig, MotionConfig, SamplingConfig, SimulationConfig
+from .ctc import CTCTracks, read_ctc_tracks, write_tracks_csv
 from .errors import ErrorConfig, apply_tracking_errors
 from .io import export_tracks_csv
 from .metrics import (
@@ -15,4 +16,5 @@ __all__ = [
     "ErrorConfig", "apply_tracking_errors",
     "compute_neighbour_continuity", "compute_neighbour_continuity_observed",
     "border_interior_mask", "export_tracks_csv",
+    "CTCTracks", "read_ctc_tracks", "write_tracks_csv",
 ]

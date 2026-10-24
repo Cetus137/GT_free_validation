@@ -14,7 +14,8 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+ctc = ["tifffile>=2023.1"]
+dev = ["pytest>=8.0", "tifffile>=2023.1"]
 
 [tool.pytest.ini_options]
 # Always test THIS repo's source, even if another copy of tracking_validation
