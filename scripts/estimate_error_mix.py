@@ -29,6 +29,7 @@ import pandas as pd
 from scipy.optimize import nnls
 
 ROOT = Path(__file__).resolve().parents[1]
+RESULTS_DIR = ROOT / "data" / "_results"
 sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
@@ -48,11 +49,15 @@ NOISE_FLOOR = 0.003      # metric units; zero-noise channels get this floor
 def calibrate(sweep_csv: Path, types: list[str], source: str | None = None) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """Response matrix A[channel, type] (metric change per unit rate), channel
     noise (sd over clean pairs), and global clean baseline per channel.
-    ``source`` restricts calibration to one recording (e.g. "CE01")."""
+    ``source`` restricts calibration to one recording (e.g. "CE01"), or to the
+    simulations when it starts with "SIM" (prefix match)."""
     df = pd.read_csv(sweep_csv)
-    real = df[df.source.str.startswith("CE")]
-    if source is not None:
-        real = real[real.source == source]
+    if source is not None and source.startswith("SIM"):
+        real = df[df.source.str.startswith(source)]
+    else:
+        real = df[df.source.str.startswith("CE")]
+        if source is not None:
+            real = real[real.source == source]
     base = real[real.error == "none"].set_index(["source", "pair"])
     err = real[real.error != "none"].copy()
     for ch in CHANNELS:
@@ -63,7 +68,18 @@ def calibrate(sweep_csv: Path, types: list[str], source: str | None = None) -> t
         g = err[err.error == t]
         for ch in CHANNELS:
             A.loc[ch, t] = np.sum(g.rate_realised * g["d_" + ch]) / np.sum(g.rate_realised ** 2)
-    noise = base[CHANNELS].std().clip(lower=NOISE_FLOOR)
+    # channel noise: the larger of the clean-pair spread and the residual spread of the
+    # single-type fits.  The residual term matters when the clean set is small (e.g. a
+    # few simulated pairs), where the clean spread alone is unrealistically tiny and
+    # would give a channel a huge weight.
+    resid = {}
+    for ch in CHANNELS:
+        r = []
+        for t in types:
+            g = err[err.error == t]
+            r.append((g["d_" + ch] - A.loc[ch, t] * g.rate_realised).values)
+        resid[ch] = float(np.nanstd(np.concatenate(r))) if r else 0.0
+    noise = pd.Series({ch: max(float(base[ch].std()), resid[ch], NOISE_FLOOR) for ch in CHANNELS})
     baseline = base[CHANNELS].mean()
     return A, noise, baseline
 
@@ -174,9 +190,12 @@ def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types, source: str | 
     the estimate of the injected type and the spill-over into the other types.
     ``source`` restricts to one recording."""
     df = pd.read_csv(sweep_csv)
-    real = df[df.source.str.startswith("CE") & (df.error != "none") & df.error.isin(types)].copy()
-    if source is not None:
-        real = real[real.source == source]
+    if source is not None and source.startswith("SIM"):
+        real = df[df.source.str.startswith(source) & (df.error != "none") & df.error.isin(types)].copy()
+    else:
+        real = df[df.source.str.startswith("CE") & (df.error != "none") & df.error.isin(types)].copy()
+        if source is not None:
+            real = real[real.source == source]
     real = real.dropna(subset=CHANNELS)
     rows = []
     for _, r in real.iterrows():
@@ -189,6 +208,55 @@ def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types, source: str | 
         row["est_other"] = est.sum() - row["est_same"]
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+def _sim_pair(stage_means: pd.DataFrame, stage: str, seed: int):
+    """One simulated (t, t+1) pair of the stage-matched slab tissue, as frame dicts."""
+    from tracking_validation import frames_from_array, simulate_sequence
+    cfg = sweep.sim_config_from_stage(stage_means.loc[stage], 1000, seed, shape="slab")
+    return frames_from_array(simulate_sequence(cfg).frames), cfg.box_size
+
+
+def validate_sim(a, A, noise, baseline, types, n_mixtures: int = 60, n_pairs: int = 30,
+                 stage: str = "100-200") -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Simulation-only validation: random mixtures on fresh simulated pairs, and the
+    fixed-mix scenarios pooled over ``n_pairs`` simulated pairs.  Calibration and
+    baseline must come from the simulation rows of the sweep."""
+    meas = pd.read_csv(RESULTS_DIR / "ce_stage_measurements.csv")
+    stage_means = meas.groupby("stage")[["nn_med", "nn_p10", "disp_med", "disp_p90", "density", "z_extent"]].mean()
+    rng = np.random.default_rng(a.seed + 7)
+    rows = []
+    for k in range(n_mixtures):
+        pair, box = _sim_pair(stage_means, stage, 10_000 + k)
+        spacing = sweep.median_nn(pair[0]["positions"])
+        true = {t: float(rng.uniform(0, a.max_rate)) for t in types}
+        if a.sparse and rng.random() < 0.5:
+            keep = rng.choice(types); true = {t: (v if t == keep else v * 0.2) for t, v in true.items()}
+        obs, log = apply_tracking_errors(pair, mixture_config(true, spacing), box, np.random.default_rng(int(rng.integers(1 << 30))))
+        realised = realised_error_rates(pair, obs, log, first_frame_clean=True)
+        m = sweep.evaluate_pair(obs, 8, a.cap, None)
+        est = estimate(np.array([m[ch] - baseline[ch] for ch in CHANNELS]), A, noise)
+        row = dict(source="SIM", pair=k)
+        for i, t in enumerate(types):
+            row[f"true_{t}"] = realised[t]; row[f"glob_{t}"] = est[i]; row[f"own_{t}"] = est[i]
+        rows.append(row)
+    mix = pd.DataFrame(rows)
+    prow = []
+    pairs = [_sim_pair(stage_means, stage, 20_000 + k) for k in range(n_pairs)]
+    for name, true0 in SCENARIOS.items():
+        true = {k: v * a.scenario_scale for k, v in true0.items()}
+        d_glob, realised = [], []
+        for pair, box in pairs:
+            spacing = sweep.median_nn(pair[0]["positions"])
+            obs, log = apply_tracking_errors(pair, mixture_config(true, spacing), box, np.random.default_rng(int(rng.integers(1 << 30))))
+            realised.append(realised_error_rates(pair, obs, log, first_frame_clean=True))
+            m = sweep.evaluate_pair(obs, 8, a.cap, None)
+            d_glob.append([m[ch] - baseline[ch] for ch in CHANNELS])
+        est = estimate(np.mean(d_glob, axis=0), A, noise)
+        r = pd.DataFrame(realised).mean()
+        prow.append(dict(seq="SIM", scenario=name, n_pairs=n_pairs,
+                         **{f"true_{t}": r[t] for t in types}, **{f"est_{t}": est[i] for i, t in enumerate(types)}))
+    return mix, pd.DataFrame(prow)
 
 
 def report(val: pd.DataFrame, types: list[str], label: str) -> pd.DataFrame:
@@ -225,6 +293,9 @@ def main() -> int:
     p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
     p.add_argument("--outliers", action="store_true",
                    help="add the per-cell outlier-fraction channels (requires sweeps that record them)")
+    p.add_argument("--simulation", action="store_true",
+                   help="simulation-only: calibrate on the sweep's SIM rows and validate on fresh simulated pairs")
+    p.add_argument("--sim-stage", default="100-200", help="stage of the matched slab tissue for --simulation")
     p.add_argument("--switch-cap", type=float, default=1.1,
                    help="swap-partner distance (spacings) for injected mixtures; match the calibration sweep")
     p.add_argument("--outlier-calib", type=Path, default=None,
@@ -238,6 +309,23 @@ def main() -> int:
     types = TYPES_6 if a.six else TYPES_4
     if a.outliers:
         CHANNELS.extend(c for c in OUTLIER_CHANNELS if c not in CHANNELS)
+
+    if a.simulation:
+        A, noise, baseline = calibrate(a.sweep, types, source="SIM")
+        pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
+        print("### SIMULATION-ONLY. Response matrix (x100 per 1%):"); print(A.round(3).to_string())
+        on = estimate_on_sweep(a.sweep, A, noise, baseline, types, source="SIM")
+        on.to_csv(a.out.with_name(a.out.stem + "_on_sweep.csv"), index=False)
+        mix, pooled = validate_sim(a, A, noise, baseline, types, n_mixtures=a.n_mixtures, stage=a.sim_stage)
+        mix.to_csv(a.out, index=False); pooled.to_csv(a.out.with_name(a.out.stem + "_pooled.csv"), index=False)
+        report(mix, types, "simulation, single pairs")
+        e = np.concatenate([(pooled[f"est_{t}"] - pooled[f"true_{t}"]).values * 100 for t in types])
+        print("\n### simulation, fixed mixes pooled over 30 pairs")
+        for _, r in pooled.iterrows():
+            print(f"  {r.scenario:15s} " + "  ".join(f"{t}: {100*r['true_'+t]:4.1f} -> {100*r['est_'+t]:4.1f}" for t in types))
+        print(f"  RMSE {np.sqrt((e**2).mean()):.2f} points, max abs error {np.abs(e).max():.2f}")
+        print(f"wrote {a.out}")
+        return 0
 
     A, noise, baseline = calibrate(a.sweep, types)
     if a.outliers and a.outlier_calib is not None:

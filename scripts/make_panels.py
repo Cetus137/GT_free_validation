@@ -48,6 +48,13 @@ def _load_sweep(shape="slab"):
 
 def _curve(df, kind, src):
     g = df[(df.error == kind) & (df.src == src)]
+    if src == "sim_only":
+        # simulation treated as the primary data: mean over seeds with 95% CI over simulated pairs
+        g = df[(df.error == kind) & (df.src == "sim")]
+        pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=("d_wio", "mean")).reset_index()
+        a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
+        a["lo"] = a.y - 1.96 * a.sd / np.sqrt(a.n); a["hi"] = a.y + 1.96 * a.sd / np.sqrt(a.n)
+        return a
     if src == "real":
         pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=("d_wio", "mean")).reset_index()
         a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
@@ -94,13 +101,89 @@ def response_curves(order, stem):
     fs.save(fig, OUT / stem)
 
 
-# --------------------------------------------------------------------------- fingerprint
-
-def fingerprint(order, comps, stem):
+def response_curves_sim(order, stem):
+    """Simulation-only response curves: one line per type, CI over simulated pairs."""
     df = _load_sweep("slab")
     if df is None:
         return
-    real = df[(df.src == "real") & (df.rate == 0.10)]
+    n = len(order); ncol = 4 if n == 4 else 3; nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(fs.DOUBLE, 1.9 * nrow + 0.3), sharey=True,
+                             gridspec_kw=dict(left=0.07, right=0.99, top=0.9 if nrow == 1 else 0.93,
+                                              bottom=0.24 if nrow == 1 else 0.14, wspace=0.15, hspace=0.55))
+    axes = np.atleast_1d(axes).ravel(); ymin = 0
+    for ax, kind in zip(axes, order):
+        col = fs.SERIES[kind]; c = _curve(df, kind, "sim_only")
+        x, y = np.r_[0, c.x * 100], np.r_[0, c.y * 100]
+        ax.fill_between(x, np.r_[0, c.lo * 100], np.r_[0, c.hi * 100], color=col, alpha=0.18, lw=0)
+        ax.plot(x, y, color=col, **fs.LINE, **fs.MARK)
+        slope = -np.sum(c.x * c.y) / np.sum(c.x ** 2)
+        ax.set_title(fs.LABELS[kind], loc="left", pad=3)
+        ax.text(0.97, 0.95, f"{slope:.2f} pt / %", transform=ax.transAxes, ha="right", va="top", fontsize=7.5, color=fs.INK2)
+        fs.grid(ax); ax.set_xlim(0, 21); ax.set_xticks([0, 5, 10, 20]); ax.set_xlabel("Cells affected (%)")
+        ymin = min(ymin, float(y.min()))
+    for ax in axes[n:]:
+        ax.axis("off")
+    lo = np.floor(ymin / 5) * 5 - 1
+    for ax in axes[:n]:
+        ax.set_ylim(lo, 1); ax.set_yticks(np.arange(0, lo, -5))
+    for i in range(0, n, ncol):
+        axes[i].set_ylabel("Δ overlap (×100)")
+    fs.save(fig, OUT / stem)
+
+
+def schematic(stem="schematic"):
+    """Concept panel: one focal cell, its neighbours at t and t+1, and the fate of
+    each neighbour (retained / vanished / displaced / newcomer) drawn in 2D."""
+    rng = np.random.default_rng(3)
+    focal = np.array([0.0, 0.0])
+    ang = np.linspace(0, 2 * np.pi, 7)[:-1] + 0.2
+    nb0 = np.c_[np.cos(ang), np.sin(ang)] * np.array([[1.0], [1.15], [0.95], [1.05], [1.1], [1.0]])
+    labels = list("ABCDEF")
+    # t+1: A..D retained (small moves), E vanished (missed), F displaced (label now far), new label G arrives
+    nb1 = nb0 + rng.normal(0, 0.07, nb0.shape)
+    fate = {"A": "retained", "B": "retained", "C": "retained", "D": "retained", "E": "vanished", "F": "displaced"}
+    far_F = np.array([2.3, -0.9]); newcomer = nb0[5] * 1.05 + np.array([0.05, 0.1])
+    colors = {"retained": fs.INK2, "vanished": fs.SERIES["miss"], "displaced": fs.SERIES["switch"], "newcomer": fs.SERIES["fp"]}
+    fig, axes = plt.subplots(1, 2, figsize=(fs.SINGLE, 1.9), gridspec_kw=dict(left=0.02, right=0.98, top=0.86, bottom=0.2, wspace=0.08))
+    for ax, title in zip(axes, ("t", "t + 1")):
+        ax.set_aspect("equal"); ax.set_xlim(-1.6, 2.6); ax.set_ylim(-1.6, 1.6); ax.axis("off")
+        ax.set_title(title, loc="left", pad=2)
+        ax.scatter(*focal, s=120, color=fs.INK, zorder=4)
+    # frame t
+    for p, l in zip(nb0, labels):
+        axes[0].plot([focal[0], p[0]], [focal[1], p[1]], color=fs.GRID, lw=1, zorder=1)
+        axes[0].scatter(*p, s=70, color=fs.INK2, edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+        axes[0].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=fs.INK2)
+    # frame t+1
+    for p, l in zip(nb1, labels):
+        f = fate[l]
+        if f == "vanished":
+            axes[1].scatter(*p, s=70, facecolors="none", edgecolors=colors[f], linewidths=1.2, linestyle="--", zorder=3)
+            axes[1].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=colors[f])
+        elif f == "displaced":
+            axes[1].scatter(*far_F, s=70, color=colors[f], edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+            axes[1].text(far_F[0] + 0.25, far_F[1], l, ha="left", va="center", fontsize=7.5, color=colors[f])
+            axes[1].annotate("", xy=far_F, xytext=p, arrowprops=dict(arrowstyle="->", color=colors[f], lw=1))
+        else:
+            axes[1].plot([focal[0], p[0]], [focal[1], p[1]], color=fs.GRID, lw=1, zorder=1)
+            axes[1].scatter(*p, s=70, color=fs.INK2, edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+            axes[1].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=fs.INK2)
+    axes[1].plot([focal[0], newcomer[0]], [focal[1], newcomer[1]], color=fs.GRID, lw=1, zorder=1)
+    axes[1].scatter(*newcomer, s=70, color=colors["newcomer"], edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+    axes[1].text(newcomer[0] * 1.3, newcomer[1] * 1.3 + 0.05, "G", ha="center", va="center", fontsize=7.5, color=colors["newcomer"])
+    h = [fs.dot_handle("Retained", fs.INK2), fs.dot_handle("Vanished", colors["vanished"]),
+         fs.dot_handle("Displaced", colors["displaced"]), fs.dot_handle("Newcomer", colors["newcomer"])]
+    fig.legend(handles=h, loc="lower left", bbox_to_anchor=(0.02, 0.0), ncol=4, handletextpad=0.3, columnspacing=0.9)
+    fs.save(fig, OUT / stem)
+
+
+# --------------------------------------------------------------------------- fingerprint
+
+def fingerprint(order, comps, stem, src="real"):
+    df = _load_sweep("slab")
+    if df is None:
+        return
+    real = df[(df.src == src) & (df.rate == 0.10)]
     M = np.array([[real[real.error == k][c].mean() * 100 for c, _ in comps] for k in order])
     vmax = np.nanmax(np.abs(M)); norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
     h = 0.5 * len(order) + 0.9
@@ -161,15 +244,19 @@ def inversion_pooled(file="error_mix_validation_pooled.csv", stem="inversion_poo
     lim = 100 * p[[f"true_{t}" for t in fs.ORDER4] + [f"est_{t}" for t in fs.ORDER4]].max().max() + 0.5
     fig, ax = plt.subplots(figsize=(fs.SINGLE, fs.SINGLE + 0.4), gridspec_kw=dict(left=0.17, right=0.97, top=0.97, bottom=0.3))
     fs.identity(ax, lim)
+    seqs = sorted(p.seq.astype(str).str.zfill(2).unique())
+    markers = dict(zip(seqs, ("o", "s", "^")))
     for t in fs.ORDER4:
-        for seq, marker in (("01", "o"), ("02", "s")):
+        for seq, marker in markers.items():
             g = p[p.seq.astype(str).str.zfill(2) == seq]
             ax.scatter(100 * g[f"true_{t}"], 100 * g[f"est_{t}"], marker=marker, color=fs.SERIES[t], **{**fs.SCAT, "s": 26})
     e = np.concatenate([100 * (p[f"est_{t}"] - p[f"true_{t}"]).values for t in fs.ORDER4])
     ax.text(0.97, 0.04, f"RMSE {np.sqrt(np.mean(e ** 2)):.2f} pt", transform=ax.transAxes, ha="right", va="bottom", fontsize=7.5, color=fs.INK2)
     ax.set_xlim(0, lim); ax.set_ylim(0, lim); ax.set_aspect("equal"); fs.grid(ax, "both")
     ax.set_xlabel("True rate (%)"); ax.set_ylabel("Estimated rate (%)")
-    h = [fs.dot_handle(fs.LABELS[t], fs.SERIES[t]) for t in fs.ORDER4] + [fs.dot_handle("Recording 01", fs.INK2), fs.dot_handle("Recording 02", fs.INK2, "s")]
+    h = [fs.dot_handle(fs.LABELS[t], fs.SERIES[t]) for t in fs.ORDER4]
+    if len(seqs) > 1:
+        h += [fs.dot_handle(f"Recording {s}", fs.INK2, m) for s, m in markers.items()]
     fig.legend(handles=h, loc="lower left", bbox_to_anchor=(0.05, 0.0), ncol=2, handletextpad=0.3, columnspacing=1.0)
     fs.save(fig, OUT / stem)
 
@@ -298,6 +385,14 @@ def main() -> int:
     inversion_rate("error_mix_low_out_on_sweep.csv", "lowrate_outliers", lim=2.3, ticks=(0, 0.5, 1, 1.5, 2))
     inversion_rate("error_mix_low_knn_on_sweep.csv", "lowrate_knn", lim=2.3, ticks=(0, 0.5, 1, 1.5, 2))
     cross_embryo()
+    # --- simulation-only versions for a simulation-driven Figure 1
+    schematic()
+    response_curves_sim(fs.ORDER4, "sim_response_curves")
+    response_curves_sim(fs.ORDER6, "sim_response_curves_all")
+    fingerprint(fs.ORDER4, comps4, "sim_fingerprint", src="sim")
+    fingerprint(fs.ORDER6, comps5, "sim_fingerprint_all", src="sim")
+    inversion_rate("error_mix_sim_on_sweep.csv", "sim_inversion_rate")
+    inversion_pooled("error_mix_sim_pooled.csv", "sim_inversion_pooled")
     return 0
 
 
