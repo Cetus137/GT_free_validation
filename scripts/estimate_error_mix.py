@@ -76,10 +76,13 @@ def estimate(d: np.ndarray, A: pd.DataFrame, noise: pd.Series) -> np.ndarray:
 
 # --------------------------------------------------------------------------- validation
 
+SWITCH_CAP = 1.1   # swap-partner distance in spacings for injected mixtures; must match the calibration sweep
+
+
 def mixture_config(rates: dict[str, float], spacing: float) -> ErrorConfig:
     return ErrorConfig(
         p_miss=rates.get("miss", 0.0), fp_rate=rates.get("fp", 0.0), lambda_fp=0.0,
-        p_switch=rates.get("switch", 0.0) / 2.0, max_switch_distance=3.0 * spacing,
+        p_switch=rates.get("switch", 0.0) / 2.0, max_switch_distance=SWITCH_CAP * spacing,
         p_frag=rates.get("frag", 0.0), p_merge=rates.get("merge", 0.0) / 2.0,
         p_split=rates.get("split", 0.0), split_distance=0.75 * spacing,
         fp_placement="near_cells", fp_offset=spacing, first_frame_clean=True,
@@ -222,11 +225,15 @@ def main() -> int:
     p.add_argument("--skip-mixtures", action="store_true", help="skip the random-mixture validation")
     p.add_argument("--outliers", action="store_true",
                    help="add the per-cell outlier-fraction channels (requires sweeps that record them)")
+    p.add_argument("--switch-cap", type=float, default=1.1,
+                   help="swap-partner distance (spacings) for injected mixtures; match the calibration sweep")
     p.add_argument("--outlier-calib", type=Path, default=None,
                    help="sweep CSV (e.g. the low-rate one) used to calibrate ONLY the outlier channels; "
                         "the count channels saturate, so fit them where the estimator will be used")
     p.add_argument("--seed", type=int, default=0)
     a = p.parse_args()
+    global SWITCH_CAP
+    SWITCH_CAP = a.switch_cap
     sweep.MODE = a.mode
     types = TYPES_6 if a.six else TYPES_4
     if a.outliers:
