@@ -64,9 +64,12 @@ def median_nn(pos: np.ndarray) -> float:
     return float(np.median(d[:, 1]))
 
 
+SWITCH_CAP = 3.0    # max switch partner distance in spacings; set from --switch-cap
+
+
 def error_config(kind: str, rate: float, spacing: float) -> ErrorConfig:
     cfg = dict(p_miss=0.0, lambda_fp=0.0, p_switch=0.0, p_merge=0.0, p_split=0.0,
-               split_distance=0.75 * spacing, max_switch_distance=3.0 * spacing,
+               split_distance=0.75 * spacing, max_switch_distance=SWITCH_CAP * spacing,
                fp_placement="near_cells", fp_offset=spacing, first_frame_clean=True)
     if kind == "miss":
         cfg["p_miss"] = rate
@@ -232,7 +235,7 @@ def run_sim(a, rates, measures: pd.DataFrame) -> list[dict]:
 # --------------------------------------------------------------------------- main
 
 def main() -> int:
-    global MODE, ERROR_TYPES
+    global MODE, ERROR_TYPES, SWITCH_CAP
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", type=Path, default=ROOT / "data")
     p.add_argument("--cache", type=Path, default=ROOT / "data" / "_cache")
@@ -245,6 +248,8 @@ def main() -> int:
     p.add_argument("--stride", type=int, default=4, help="use every n-th frame pair")
     p.add_argument("--frame-stride", type=int, default=1,
                    help="subsample frames by this factor first (longer interval); real frames only")
+    p.add_argument("--switch-cap", type=float, default=3.0,
+                   help="switch partners drawn within this many median spacings (1.1 ≈ nearest neighbours only)")
     p.add_argument("--seeds", type=int, default=3, help="error seeds per real pair")
     p.add_argument("--rates", type=float, nargs="+", default=[0.01, 0.02, 0.05, 0.10, 0.20])
     p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,
@@ -257,6 +262,7 @@ def main() -> int:
     a = p.parse_args()
     MODE = a.mode
     ERROR_TYPES = tuple(a.types)
+    SWITCH_CAP = a.switch_cap
 
     rows, measures = run_real(a, a.rates)
     if a.sim:
