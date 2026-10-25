@@ -72,7 +72,7 @@ def inject_chains(pair, k, rate, ok_true, rng, cap):
             continue
         chain = [start]
         while len(chain) < k:
-            opts = [n for n in nb[chain[-1]] if n not in used and n not in chain and n in present0 and n in idx_of_true]
+            opts = [n for n in nb.get(chain[-1], []) if n not in used and n not in chain and n in present0 and n in idx_of_true]
             if not opts:
                 break
             chain.append(int(rng.choice(opts)))
