@@ -45,7 +45,9 @@ def main() -> int:
     p.add_argument("--caps", type=float, nargs="+", default=[0.5, 1.0, 2.0], help="max link distance / median spacing")
     p.add_argument("--dropout", type=float, nargs="+", default=[0.0],
                    help="fraction of detections dropped per frame (default none: linker errors only)")
-    p.add_argument("--methods", nargs="+", default=["greedy", "lap"])
+    p.add_argument("--methods", nargs="+", default=["greedy", "lap"], help="greedy, lap, metric")
+    p.add_argument("--metric-lambda", type=float, default=None,
+                   help="displacement weight for the metric-refined linker (default from linking module)")
     p.add_argument("--neigh-cap", type=float, default=15.0)
     p.add_argument("--loc-threshold", type=float, default=0.6, help="kNN locator: displaced share threshold")
     p.add_argument("--frame-stride", type=int, nargs="+", default=[1],
@@ -57,6 +59,9 @@ def main() -> int:
                         "(stride 1 uses the default calibration)")
     p.add_argument("--out", type=Path, default=RESULTS / "linker_test.csv")
     a = p.parse_args()
+    if a.metric_lambda is not None:
+        import tracking_validation.linking as _lk
+        _lk.METRIC_DISPLACEMENT_WEIGHT = a.metric_lambda
 
     # estimator calibration (Delaunay channels + outlier channels from the low-rate sweep)
     em.CHANNELS.extend(c for c in em.OUTLIER_CHANNELS if c not in em.CHANNELS)

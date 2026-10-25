@@ -69,7 +69,96 @@ def _match_lap(p0: np.ndarray, p1: np.ndarray, cap: float) -> np.ndarray:
     return np.array(out, dtype=int).reshape(-1, 2)
 
 
-_MATCHERS = {"greedy": _match_greedy, "lap": _match_lap}
+def _delaunay_graph(pos: np.ndarray, cap: float) -> dict[int, list[tuple[int, float]]]:
+    """index -> [(neighbour index, distance)] from the Delaunay triangulation (hull cells
+    get no entry), edges longer than cap dropped."""
+    from .metrics import _frame_neighbour_map_delaunay
+    idx = np.arange(len(pos))
+    nb, nd = _frame_neighbour_map_delaunay(pos, idx, max_distance=cap)
+    return {int(i): list(zip(nb[i], nd[i])) for i in nb}
+
+
+METRIC_DISPLACEMENT_WEIGHT = 1.0   # lambda: continuity gain must exceed lambda x displacement
+                                   # cost increase (in units of cap^2); 0 = continuity alone
+
+
+def _match_metric(p0: np.ndarray, p1: np.ndarray, cap: float, sweeps: int = 6,
+                  rc_weight: float = 1.0, lam: float | None = None) -> np.ndarray:
+    """Linear assignment refined by local exchanges that increase neighbourhood
+    continuity: for each cell i at t the objective is its weighted identity
+    overlap (fraction of its t-neighbours, 1/distance weighted, whose linked
+    bodies are neighbours of i's linked body at t+1) plus ``rc_weight`` times the
+    Spearman rank correlation of the shared neighbours' distance order.  Two
+    cells whose t+1 targets are both within ``cap`` of each other's t position
+    may exchange targets; the exchange is kept if the summed objective over the
+    affected cells rises.  Repeats until no exchange helps or ``sweeps`` is hit."""
+    from scipy.stats import rankdata
+    lam = METRIC_DISPLACEMENT_WEIGHT if lam is None else lam
+    m = _match_lap(p0, p1, cap)
+    if len(m) < 4 or len(p0) < 5 or len(p1) < 5:
+        return m
+    sigma: dict[int, int] = {int(i): int(j) for i, j in m}
+    g0 = _delaunay_graph(p0, cap)
+    g1 = _delaunay_graph(p1, cap)
+    n1_sets = {j: {k for k, _ in nbrs} for j, nbrs in g1.items()}
+    n1_rank = {j: {k: r for r, (k, _) in enumerate(nbrs)} for j, nbrs in g1.items()}
+    cap2 = cap * cap
+
+    def term(i: int) -> float:
+        j = sigma.get(i)
+        if j is None or i not in g0 or j not in n1_sets:
+            return 0.0
+        nbrs = g0[i]
+        w = np.array([1.0 / max(d, 1e-9) for _, d in nbrs]); w /= w.sum()
+        tgt = [sigma.get(a) for a, _ in nbrs]
+        inset = np.array([t is not None and t in n1_sets[j] for t in tgt])
+        wio = float((w * inset).sum())
+        rc = 0.0
+        if rc_weight and inset.sum() >= 3:
+            r0 = np.arange(len(nbrs))[inset]
+            r1 = np.array([n1_rank[j][t] for t, ok in zip(tgt, inset) if ok])
+            a = rankdata(r0) - r0.size / 2 - 0.5; b = rankdata(r1) - r1.size / 2 - 0.5
+            den = float(np.sqrt((a * a).sum() * (b * b).sum()))
+            rc = float((a * b).sum() / den) if den > 0 else 0.0
+        return wio + rc_weight * rc
+
+    def affected(i: int, k: int) -> set[int]:
+        s = {i, k}
+        for c in (i, k):
+            s.update(a for a, _ in g0.get(c, []))
+        # cells whose t-neighbours include i or k also change (their target sets change)
+        return s
+
+    for _ in range(sweeps):
+        improved = 0
+        for i in list(sigma):
+            j = sigma.get(i)
+            if j is None:
+                continue
+            for k, _ in g0.get(i, []):
+                jk = sigma.get(k)
+                if jk is None or jk == j:
+                    continue
+                # both exchanged links must respect the cap
+                if ((p1[jk] - p0[i]) ** 2).sum() > cap2 or ((p1[j] - p0[k]) ** 2).sum() > cap2:
+                    continue
+                cells = affected(i, k)
+                before = sum(term(c) for c in cells)
+                d_before = ((p1[j] - p0[i]) ** 2).sum() + ((p1[jk] - p0[k]) ** 2).sum()
+                d_after = ((p1[jk] - p0[i]) ** 2).sum() + ((p1[j] - p0[k]) ** 2).sum()
+                sigma[i], sigma[k] = jk, j
+                after = sum(term(c) for c in cells)
+                if (after - before) - lam * (d_after - d_before) / cap2 > 1e-9:
+                    improved += 1
+                    j = sigma[i]
+                else:
+                    sigma[i], sigma[k] = j, jk
+        if not improved:
+            break
+    return np.array(sorted(sigma.items()), dtype=int).reshape(-1, 2)
+
+
+_MATCHERS = {"greedy": _match_greedy, "lap": _match_lap, "metric": _match_metric}
 
 
 # --------------------------------------------------------------------------- linking
@@ -106,6 +195,11 @@ def link_greedy(frames: list[dict], max_distance: float) -> LinkResult:
 
 def link_lap(frames: list[dict], max_distance: float) -> LinkResult:
     return link_frames(frames, max_distance, "lap")
+
+
+def link_metric(frames: list[dict], max_distance: float) -> LinkResult:
+    """Linear assignment refined to maximise neighbourhood overlap + rank correlation."""
+    return link_frames(frames, max_distance, "metric")
 
 
 # --------------------------------------------------------------------------- labelling
