@@ -142,7 +142,7 @@ def schematic(stem="schematic"):
     # t+1: A..D retained (small moves), E vanished (missed), F displaced (label now far), new label G arrives
     nb1 = nb0 + rng.normal(0, 0.07, nb0.shape)
     fate = {"A": "retained", "B": "retained", "C": "retained", "D": "retained", "E": "vanished", "F": "displaced"}
-    far_F = np.array([2.3, -0.9]); newcomer = nb0[5] * 1.05 + np.array([0.05, 0.1])
+    far_F = np.array([2.3, -0.9]); newcomer = np.array([-0.95, 0.75])   # arrives between C and D
     colors = {"retained": fs.INK2, "vanished": fs.SERIES["miss"], "displaced": fs.SERIES["switch"], "newcomer": fs.SERIES["fp"]}
     fig, axes = plt.subplots(1, 2, figsize=(fs.SINGLE, 1.9), gridspec_kw=dict(left=0.02, right=0.98, top=0.86, bottom=0.2, wspace=0.08))
     for ax, title in zip(axes, ("t", "t + 1")):
@@ -170,7 +170,7 @@ def schematic(stem="schematic"):
             axes[1].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=fs.INK2)
     axes[1].plot([focal[0], newcomer[0]], [focal[1], newcomer[1]], color=fs.GRID, lw=1, zorder=1)
     axes[1].scatter(*newcomer, s=70, color=colors["newcomer"], edgecolors=fs.SURFACE, linewidths=1, zorder=3)
-    axes[1].text(newcomer[0] * 1.3, newcomer[1] * 1.3 + 0.05, "G", ha="center", va="center", fontsize=7.5, color=colors["newcomer"])
+    axes[1].text(newcomer[0] * 1.3, newcomer[1] * 1.3, "G", ha="center", va="center", fontsize=7.5, color=colors["newcomer"])
     h = [fs.dot_handle("Retained", fs.INK2), fs.dot_handle("Vanished", colors["vanished"]),
          fs.dot_handle("Displaced", colors["displaced"]), fs.dot_handle("Newcomer", colors["newcomer"])]
     fig.legend(handles=h, loc="lower left", bbox_to_anchor=(0.02, 0.0), ncol=4, handletextpad=0.3, columnspacing=0.9)

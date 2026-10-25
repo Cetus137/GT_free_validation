@@ -271,7 +271,9 @@ def main() -> int:
     df = pd.DataFrame(rows)
     a.out.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(a.out, index=False)
-    measures.to_csv(a.out.with_name("ce_stage_measurements.csv"), index=False)
+    # stage measurements describe the native interval; a frame-stride run must not overwrite them
+    meas_name = "ce_stage_measurements.csv" if a.frame_stride == 1 else f"ce_stage_measurements_fs{a.frame_stride}.csv"
+    measures.to_csv(a.out.with_name(meas_name), index=False)
     print(f"\nwrote {a.out} ({len(df)} rows); neighbourhood mode = {MODE}; first frame clean")
 
     pd.set_option("display.width", 220); pd.set_option("display.precision", 3)

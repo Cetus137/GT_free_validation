@@ -79,7 +79,10 @@ def calibrate(sweep_csv: Path, types: list[str], source: str | None = None) -> t
             g = err[err.error == t]
             r.append((g["d_" + ch] - A.loc[ch, t] * g.rate_realised).values)
         resid[ch] = float(np.nanstd(np.concatenate(r))) if r else 0.0
-    noise = pd.Series({ch: max(float(base[ch].std()), resid[ch], NOISE_FLOOR) for ch in CHANNELS})
+    # with a large clean set (real recordings) the clean spread is the right noise model and
+    # residuals would only add fit nonlinearity; use the residual term only when clean rows are few
+    use_resid = len(base) < 30
+    noise = pd.Series({ch: max(float(base[ch].std()), resid[ch] if use_resid else 0.0, NOISE_FLOOR) for ch in CHANNELS})
     baseline = base[CHANNELS].mean()
     return A, noise, baseline
 
