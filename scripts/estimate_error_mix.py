@@ -132,20 +132,21 @@ SCENARIOS = {
 
 
 def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: float = 1.0,
-                      seqs=("01", "02")) -> pd.DataFrame:
+                      seqs=("01", "02"), frame_stride: int = 1) -> pd.DataFrame:
     """One tracker, one movie: a fixed error mix over many held-out pairs,
     estimated from the MEAN metric vector against the global baseline.
-    ``scale`` multiplies every scenario rate (e.g. 0.25 for a low-rate test)."""
+    ``scale`` multiplies every scenario rate (e.g. 0.25 for a low-rate test);
+    ``frame_stride`` subsamples frames (longer interval)."""
     rng = np.random.default_rng(a.seed + 1)
     rows = []
     for seq in seqs:
         data = inherit_parent_labels(sweep.load_ce(a.data_root, a.cache, seq), prefer="nearest")
         start = int(np.argmax(data.counts() >= 50))
-        frames = data.frames[start:]
+        frames = data.frames[start:][::frame_stride]
         excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode=sweep.MODE)
         hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         held = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]
-        pairs = rng.choice(held, size=n_pairs, replace=False)
+        pairs = rng.choice(held, size=min(n_pairs, len(held)), replace=False)
         for name, true0 in SCENARIOS.items():
             true = {k: v * scale for k, v in true0.items()}
             d_glob, realised = [], []
