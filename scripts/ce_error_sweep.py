@@ -147,7 +147,7 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
         data = inherit_parent_labels(load_ce(a.data_root, a.cache, seq), prefer="nearest")
         counts = data.counts()
         start = int(np.argmax(counts >= a.min_cells))
-        frames = data.frames[start:]
+        frames = data.frames[start:][::a.frame_stride]
         excluded = division_affected_cells(frames, k=a.k, max_neighbour_distance=a.cap, neighbourhood_mode=MODE)
         lo = frames[0]["positions"].min(axis=0); hi = frames[-1]["positions"].max(axis=0)
         box = tuple(float(v) for v in (hi + 2.0))          # FPs are clipped to this box
@@ -165,7 +165,8 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
                                  disp_med=np.median(disp), disp_p90=np.percentile(disp, 90),
                                  density=n0 / ConvexHull(pair[0]["positions"]).volume,
                                  z_extent=float(np.ptp(pair[0]["positions"][:, 2]))))
-            meta = dict(source=f"CE{seq}", pair=start + ti, n0=n0, stage=stage_of(n0))
+            meta = dict(source=f"CE{seq}", pair=start + ti * a.frame_stride, n0=n0, stage=stage_of(n0),
+                        frame_stride=a.frame_stride)
             rows += sweep_pair(pair, box, a.k, a.cap, excluded[ti], rates, a.seeds, meta)
         print(f"CE {seq}: {len([r for r in rows if r['source'] == f'CE{seq}'])} rows in {time.time() - t0:.0f}s", flush=True)
     return rows, pd.DataFrame(measures)
@@ -242,6 +243,8 @@ def main() -> int:
     p.add_argument("--cap", type=float, default=15.0, help="neighbour distance cap, microns")
     p.add_argument("--min-cells", type=int, default=50)
     p.add_argument("--stride", type=int, default=4, help="use every n-th frame pair")
+    p.add_argument("--frame-stride", type=int, default=1,
+                   help="subsample frames by this factor first (longer interval); real frames only")
     p.add_argument("--seeds", type=int, default=3, help="error seeds per real pair")
     p.add_argument("--rates", type=float, nargs="+", default=[0.01, 0.02, 0.05, 0.10, 0.20])
     p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,

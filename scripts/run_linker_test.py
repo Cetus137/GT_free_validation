@@ -51,6 +51,10 @@ def main() -> int:
     p.add_argument("--frame-stride", type=int, nargs="+", default=[1],
                    help="use every n-th frame (longer interval = harder linking); the clean baseline "
                         "is re-measured at each stride from the ground truth")
+    p.add_argument("--calib-pattern", default=None,
+                   help="per-stride calibration sweep, e.g. 'data/_results/ce_error_sweep_fs{stride}_delaunay.csv'; "
+                        "response matrix, noise AND baseline then all come from that stride's sweep "
+                        "(stride 1 uses the default calibration)")
     p.add_argument("--out", type=Path, default=RESULTS / "linker_test.csv")
     a = p.parse_args()
 
@@ -60,6 +64,7 @@ def main() -> int:
     A_low, _, _ = em.calibrate(RESULTS / "ce_error_sweep_low_out_delaunay.csv", em.TYPES_4)
     for ch in em.OUTLIER_CHANNELS:
         A.loc[ch] = A_low.loc[ch]
+    A_default, noise_default = A.copy(), noise.copy()
 
     def channel_vector(pair, ok_labels):
         """Mean channel values over the given labels (division-free cells) for one pair."""
@@ -91,8 +96,16 @@ def main() -> int:
         disp_ratio = np.median([np.median([np.linalg.norm(p1 - p0) for tid, p0 in zip(gt[t]["true_ids"], gt[t]["positions"])
                                            for p1 in [dict(zip(gt[t + 1]["true_ids"], gt[t + 1]["positions"])).get(tid)] if p1 is not None])
                                 for t in range(0, len(gt) - 1, 10)]) / spacing
+        # per-stride calibration if provided: A, noise and baseline from the sweep at this interval
+        A, noise = A_default, noise_default
+        calib_src = "default"
+        if a.calib_pattern and stride > 1:
+            cf = Path(a.calib_pattern.format(stride=stride))
+            if cf.exists():
+                A, noise, baseline = em.calibrate(cf, em.TYPES_4)
+                calib_src = cf.name
         # stride-matched clean baseline and clean false-flag rate
-        if stride > 1:
+        if stride > 1 and calib_src == "default":
             clean_vecs, clean_flags, clean_cells = [], 0, 0
             for t in range(len(gt) - 1):
                 pair = [gt[t], gt[t + 1]]
@@ -104,11 +117,12 @@ def main() -> int:
                 clean_flags += int(np.sum(v[sel] > a.loc_threshold)); clean_cells += int(np.sum(sel))
             baseline = pd.Series(np.nanmean(np.array(clean_vecs, dtype=float), axis=0), index=em.CHANNELS)
             clean_false_per_pair = clean_flags / (len(gt) - 1)
-        else:
+        elif stride == 1:
             baseline = base_default; clean_false_per_pair = 0.0
+        else:
+            clean_false_per_pair = float("nan")
         print(f"--- {seq} stride {stride}: {len(gt)} frames, displacement/spacing {disp_ratio:.2f}, "
-              f"clean baseline displaced {baseline['displaced']:.3f} rc {baseline['rc']:.3f}, "
-              f"clean false flags/pair {clean_false_per_pair:.2f}", flush=True)
+              f"calibration {calib_src}, baseline displaced {baseline['displaced']:.3f} rc {baseline['rc']:.3f}", flush=True)
         for drop in a.dropout:
             # detections: GT with random misses in every frame (a detector's behaviour)
             det, log = apply_tracking_errors(gt, ErrorConfig(p_miss=drop, lambda_fp=0.0, p_switch=0.0), box,
@@ -153,7 +167,7 @@ def main() -> int:
                     est = em.estimate(np.nan_to_num(D), A, noise)
                     rows.append(dict(seq=seq, stride=stride, disp_over_spacing=disp_ratio, method=method,
                                      cap_spacings=cap_s, dropout=drop, pairs=len(labels), n_tracks=res.n_tracks,
-                                     clean_false_flags_per_pair=clean_false_per_pair,
+                                     clean_false_flags_per_pair=clean_false_per_pair, calibration=calib_src,
                                      true_switch=100 * true_sw.mean(), true_frag=100 * true_fr.mean(), true_miss=100 * true_miss.mean(),
                                      est_switch=100 * est[0], est_frag=100 * est[1], est_miss=100 * est[2], est_fp=100 * est[3],
                                      loc_flags=flags_n, loc_precision=flags_tp / flags_n if flags_n else np.nan,
