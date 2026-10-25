@@ -142,7 +142,7 @@ def schematic(stem="schematic"):
     # t+1: A..D retained (small moves), E vanished (missed), F displaced (label now far), new label G arrives
     nb1 = nb0 + rng.normal(0, 0.07, nb0.shape)
     fate = {"A": "retained", "B": "retained", "C": "retained", "D": "retained", "E": "vanished", "F": "displaced"}
-    far_F = np.array([2.3, -0.9]); newcomer = np.array([-0.95, 0.75])   # arrives between C and D
+    far_F = np.array([2.3, -0.9]); newcomer = np.array([0.73, 0.68])    # arrives between A and B
     colors = {"retained": fs.INK2, "vanished": fs.SERIES["miss"], "displaced": fs.SERIES["switch"], "newcomer": fs.SERIES["fp"]}
     fig, axes = plt.subplots(1, 2, figsize=(fs.SINGLE, 1.9), gridspec_kw=dict(left=0.02, right=0.98, top=0.86, bottom=0.2, wspace=0.08))
     for ax, title in zip(axes, ("t", "t + 1")):
