@@ -202,6 +202,53 @@ def link_metric(frames: list[dict], max_distance: float) -> LinkResult:
     return link_frames(frames, max_distance, "metric")
 
 
+# --------------------------------------------------------------------------- gap closing
+
+def close_gaps(result: LinkResult, max_gap: int, max_distance: float) -> LinkResult:
+    """Bridge track ends to track starts up to ``max_gap`` frames later and within
+    ``max_distance`` (TrackMate's gap-closing step, by linear assignment per
+    (end frame, gap length)).  The later track takes the earlier track's label.
+    ``max_gap`` = 0 returns the input unchanged."""
+    if max_gap <= 0:
+        return result
+    frames = [dict(f) for f in result.frames]
+    T = len(frames)
+    first: dict[int, tuple[int, int]] = {}; last: dict[int, tuple[int, int]] = {}
+    for t, f in enumerate(frames):
+        for k, lab in enumerate(f["assigned_ids"].tolist()):
+            first.setdefault(lab, (t, k)); last[lab] = (t, k)
+    parent: dict[int, int] = {}
+
+    def root(l):
+        while l in parent:
+            l = parent[l]
+        return l
+
+    closed = 0
+    for gap in range(2, max_gap + 2):            # start frame = end frame + gap
+        for t in range(T - gap):
+            ends = [l for l, (tl, _) in last.items() if tl == t and root(l) == l]
+            starts = [l for l, (ts, _) in first.items() if ts == t + gap and root(l) == l and l not in parent]
+            if not ends or not starts:
+                continue
+            pe = np.array([frames[t]["positions"][last[l][1]] for l in ends])
+            ps = np.array([frames[t + gap]["positions"][first[l][1]] for l in starts])
+            m = _match_lap(pe, ps, max_distance)
+            for i, j in m:
+                e, s = ends[i], starts[j]
+                parent[s] = e                   # the later track joins the earlier one
+                last[e] = last[s]               # the merged track now ends where s ended
+                closed += 1
+    if not closed:
+        return result
+    mapping = {l: root(l) for l in list(first)}
+    out = []
+    for f in frames:
+        out.append({**f, "assigned_ids": np.array([mapping.get(int(l), int(l)) for l in f["assigned_ids"]], dtype=int)})
+    return LinkResult(frames=out, links=result.links, n_tracks=len({mapping[l] for l in mapping}),
+                      params={**result.params, "max_gap": max_gap, "gap_distance": max_distance, "gaps_closed": closed})
+
+
 # --------------------------------------------------------------------------- labelling
 
 def label_links(result: LinkResult, evaluate: list[set[int]] | None = None) -> list[dict]:
