@@ -303,8 +303,8 @@ def c_calibration_combined(ylim=(-6, 0.5)):
     sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
     sim["rate"] = np.round(sim.rate_realised * 100) / 100
     sim = sim[sim.rate.between(0.01, 0.05)]
-    fig, axes = plt.subplots(2, 4, figsize=(fs.DOUBLE, 3.2), sharex=True, sharey=True,
-                             gridspec_kw=dict(left=0.08, right=0.99, top=0.97, bottom=0.08, wspace=0.12, hspace=0.12))
+    fig, axes = plt.subplots(2, 4, figsize=(fs.DOUBLE, 3.5), sharex=True, sharey=True,
+                             gridspec_kw=dict(left=0.08, right=0.99, top=0.92, bottom=0.14, wspace=0.12, hspace=0.12))
     for r, (metric, ylabel) in enumerate((("d_wio", "Δ WIO (×100)"), ("d_rc", "Δ RC (×100)"))):
         for c, t in enumerate(fs.ORDER4):
             ax = axes[r, c]
@@ -319,7 +319,10 @@ def c_calibration_combined(ylim=(-6, 0.5)):
             ax.plot(x, y, color=fs.SERIES[t], lw=1.2, solid_capstyle="round", zorder=2)
             ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
         axes[r, 0].set_ylabel(ylabel)
-    fs.save(fig, OUT / "c_calibration_wio_rc_bare")
+    for c, t in enumerate(fs.ORDER4):
+        axes[0, c].set_title(fs.LABELS[t], loc="left", pad=3)
+        axes[1, c].set_xlabel("Cells affected (%)")
+    fs.save(fig, OUT / "c_calibration_wio_rc")
 
 
 def c_calibration_wio():
