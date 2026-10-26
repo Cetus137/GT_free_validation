@@ -30,6 +30,8 @@ from matplotlib.patches import FancyBboxPatch  # noqa: E402
 R = ROOT / "data" / "_results"
 OUT = ROOT / "figures" / "fig1"
 fs.apply()
+# Figure 1 panel order (also used by the shared panel functions called from here)
+fs.ORDER4[:] = ["miss", "switch", "frag", "fp"]
 # Figure 1 style: black, bold ticks and labels
 # Arial: Helvetica's bold sits inside a .ttc that matplotlib reads as regular only
 plt.rcParams.update({"font.family": ["Arial", "DejaVu Sans"],
@@ -116,9 +118,9 @@ def b_errors():
     moved = base + np.array([0.08, 0.05])
     cases = [
         ("Missed detection", ["1", "2", "3"], ["1", "2"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"]], "3", None),
-        ("False positive", ["1", "2", "3"], ["1", "2", "3", "n"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["3"], pal["n"]], None, "n"),
-        ("Track fragmentation", ["1", "2", "3"], ["1", "2", "4"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["4"]], None, "4"),
         ("Identity switch", ["1", "2", "3"], ["1", "3", "2"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["3"], pal["2"]], None, None),
+        ("Track fragmentation", ["1", "2", "3"], ["1", "2", "4"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["4"]], None, "4"),
+        ("False positive", ["1", "2", "3"], ["1", "2", "3", "n"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["3"], pal["n"]], None, "n"),
     ]
     fig, axes = plt.subplots(2, 4, figsize=(fs.DOUBLE, 2.7), gridspec_kw=dict(left=0.03, right=0.99, top=0.86, bottom=0.03, wspace=0.08, hspace=0.1))
     for col, (title, l0, l1, c0, c1, ghost, new) in enumerate(cases):
