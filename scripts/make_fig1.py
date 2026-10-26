@@ -1,0 +1,189 @@
+"""Figure 1 (simulation-driven), one file per panel in figures/fig1/.
+
+    python scripts/make_fig1.py
+
+  a_metrics       what the metrics measure: one focal cell's neighbourhood at t and
+                  t+1, the fate of each neighbour, and how the neighbour weight
+                  partitions into overlap / vanished / displaced
+  b_errors        the four tracking errors as two-frame cartoons
+  c_fingerprint   which channels respond to which error (simulated tissue, 10% error)
+  d_inversion     error proportions recovered from the metric vector on simulated
+                  tissue: pooled fixed mixes (all four types at once) and per-type
+                  recovery against injected rate
+"""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts"))
+import figstyle as fs  # noqa: E402
+import make_panels as mp  # noqa: E402
+import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.colors import TwoSlopeNorm  # noqa: E402
+from matplotlib.patches import FancyBboxPatch  # noqa: E402
+
+R = ROOT / "data" / "_results"
+OUT = ROOT / "figures" / "fig1"
+fs.apply()
+FATE = {"retained": fs.INK2, "vanished": fs.SERIES["miss"], "displaced": fs.SERIES["switch"], "newcomer": fs.SERIES["fp"]}
+
+
+# --------------------------------------------------------------------------- a: the metrics
+
+def a_metrics():
+    rng = np.random.default_rng(3)
+    focal = np.array([0.0, 0.0])
+    ang = np.linspace(0, 2 * np.pi, 7)[:-1] + 0.2
+    radii = np.array([1.0, 1.15, 0.95, 1.05, 1.1, 1.0])
+    nb0 = np.c_[np.cos(ang), np.sin(ang)] * radii[:, None]
+    labels = list("ABCDEF")
+    fate = {"A": "retained", "B": "retained", "C": "retained", "D": "retained", "E": "vanished", "F": "displaced"}
+    nb1 = nb0 + rng.normal(0, 0.07, nb0.shape)
+    far_F = np.array([2.3, -0.9]); newcomer = np.array([0.73, 0.68])
+    w = 1 / radii; w = w / w.sum()
+
+    fig = plt.figure(figsize=(fs.SINGLE, 2.6))
+    gs = fig.add_gridspec(2, 2, height_ratios=[3.2, 1], left=0.02, right=0.98, top=0.9, bottom=0.17, wspace=0.08, hspace=0.35)
+    axes = [fig.add_subplot(gs[0, 0]), fig.add_subplot(gs[0, 1])]
+    for ax, title in zip(axes, ("t", "t + 1")):
+        ax.set_aspect("equal"); ax.set_xlim(-1.6, 2.6); ax.set_ylim(-1.6, 1.6); ax.axis("off")
+        ax.set_title(title, loc="left", pad=2)
+        ax.scatter(*focal, s=120, color=fs.INK, zorder=4)
+    for p, l in zip(nb0, labels):
+        axes[0].plot([0, p[0]], [0, p[1]], color=fs.GRID, lw=1, zorder=1)
+        axes[0].scatter(*p, s=70, color=fs.INK2, edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+        axes[0].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=fs.INK2)
+    for p, l in zip(nb1, labels):
+        f = fate[l]
+        if f == "vanished":
+            axes[1].scatter(*p, s=70, facecolors="none", edgecolors=FATE[f], linewidths=1.2, linestyle="--", zorder=3)
+            axes[1].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=FATE[f])
+        elif f == "displaced":
+            axes[1].scatter(*far_F, s=70, color=FATE[f], edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+            axes[1].text(far_F[0] + 0.25, far_F[1], l, ha="left", va="center", fontsize=7.5, color=FATE[f])
+            axes[1].annotate("", xy=far_F, xytext=p, arrowprops=dict(arrowstyle="->", color=FATE[f], lw=1))
+        else:
+            axes[1].plot([0, p[0]], [0, p[1]], color=fs.GRID, lw=1, zorder=1)
+            axes[1].scatter(*p, s=70, color=fs.INK2, edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+            axes[1].text(p[0] * 1.3, p[1] * 1.3, l, ha="center", va="center", fontsize=7.5, color=fs.INK2)
+    axes[1].plot([0, newcomer[0]], [0, newcomer[1]], color=fs.GRID, lw=1, zorder=1)
+    axes[1].scatter(*newcomer, s=70, color=FATE["newcomer"], edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+    axes[1].text(newcomer[0] * 1.3, newcomer[1] * 1.3, "G", ha="center", va="center", fontsize=7.5, color=FATE["newcomer"])
+
+    # weight partition of the t-neighbourhood: overlap (retained) | vanished | displaced
+    axb = fig.add_subplot(gs[1, :]); axb.axis("off"); axb.set_xlim(0, 1); axb.set_ylim(0, 1)
+    parts = [("retained", sum(w[i] for i, l in enumerate(labels) if fate[l] == "retained")),
+             ("vanished", sum(w[i] for i, l in enumerate(labels) if fate[l] == "vanished")),
+             ("displaced", sum(w[i] for i, l in enumerate(labels) if fate[l] == "displaced"))]
+    x = 0.0
+    for name, v in parts:
+        axb.add_patch(FancyBboxPatch((x + 0.004, 0.55), v - 0.008, 0.4, boxstyle="square,pad=0", color=FATE[name], lw=0))
+        axb.text(x + v / 2, 0.75, f"{v:.2f}", ha="center", va="center", fontsize=7, color="#ffffff")
+        lab = "Overlap" if name == "retained" else name.capitalize()
+        axb.text(x + v / 2, 0.38, lab, ha="center", va="center", fontsize=7, color=fs.INK2)
+        x += v
+    axb.text(0, 0.08, "Weight of t-neighbours (1/distance): overlap + vanished + displaced = 1", fontsize=7, color=fs.INK2, va="center")
+    fig.legend(handles=[fs.dot_handle(k.capitalize(), c) for k, c in FATE.items()], loc="lower left",
+               bbox_to_anchor=(0.02, 0.0), ncol=4, handletextpad=0.3, columnspacing=0.9)
+    fs.save(fig, OUT / "a_metrics")
+
+
+# --------------------------------------------------------------------------- b: the errors
+
+def _cells(ax, pts, labels, colors, hollow=()):
+    for (x, y), l, c in zip(pts, labels, colors):
+        if l in hollow:
+            ax.scatter(x, y, s=160, facecolors="none", edgecolors=c, linewidths=1.2, linestyle="--", zorder=3)
+        else:
+            ax.scatter(x, y, s=160, color=c, edgecolors=fs.SURFACE, linewidths=1, zorder=3)
+        ax.text(x, y, l, ha="center", va="center", fontsize=7, color="#ffffff" if l not in hollow else c, zorder=4)
+
+
+def b_errors():
+    pal = {"1": "#2a78d6", "2": "#eb6834", "3": "#1baf7a", "4": "#eda100", "n": fs.SERIES["fp"]}
+    base = np.array([[0.0, 0.0], [1.0, 0.3], [0.5, -0.9]])
+    moved = base + np.array([0.08, 0.05])
+    cases = [
+        ("Missed detection", ["1", "2", "3"], ["1", "2"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"]], "3", None),
+        ("False positive", ["1", "2", "3"], ["1", "2", "3", "n"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["3"], pal["n"]], None, "n"),
+        ("Track fragmentation", ["1", "2", "3"], ["1", "2", "4"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["2"], pal["4"]], None, "4"),
+        ("Identity switch", ["1", "2", "3"], ["1", "3", "2"], [pal["1"], pal["2"], pal["3"]], [pal["1"], pal["3"], pal["2"]], None, None),
+    ]
+    fig, axes = plt.subplots(2, 4, figsize=(fs.DOUBLE, 2.7), gridspec_kw=dict(left=0.03, right=0.99, top=0.86, bottom=0.03, wspace=0.08, hspace=0.1))
+    for col, (title, l0, l1, c0, c1, ghost, new) in enumerate(cases):
+        ax0, ax1 = axes[0, col], axes[1, col]
+        for ax in (ax0, ax1):
+            ax.set_aspect("equal"); ax.set_xlim(-0.6, 1.9); ax.set_ylim(-1.5, 1.0); ax.axis("off")
+        ax0.set_title(title, loc="left", pad=8)
+        ax0.text(-0.55, -1.35, "t", fontsize=7.5, color=fs.MUTED); ax1.text(-0.55, -1.35, "t + 1", fontsize=7.5, color=fs.MUTED)
+        _cells(ax0, base, l0, c0)
+        if title == "Missed detection":
+            _cells(ax1, moved[:2], l1, c1)
+            ax1.scatter(*moved[2], s=160, facecolors="none", edgecolors=fs.MUTED, linewidths=1.0, linestyle="--", zorder=3)
+        elif title == "False positive":
+            _cells(ax1, list(moved) + [np.array([1.5, -0.4])], l1, c1)
+        elif title == "Identity switch":
+            _cells(ax1, moved, l1, c1)
+            # curved double arrow to the right of the two swapped cells
+            ax1.annotate("", xy=moved[1] + [0.32, -0.05], xytext=moved[2] + [0.32, 0.05],
+                         arrowprops=dict(arrowstyle="<->", color=fs.INK2, lw=0.9, connectionstyle="arc3,rad=-0.4"))
+        else:
+            _cells(ax1, list(moved), l1, c1)
+    fs.save(fig, OUT / "b_errors")
+
+
+# --------------------------------------------------------------------------- c: fingerprint with survival
+
+def c_fingerprint():
+    df = mp._load_sweep("slab")
+    if df is None:
+        return
+    sim = df[(df.src == "sim") & (df.rate == 0.10)].copy()
+    sim["d_survival"] = sim.survival - 1.0
+    comps = [("d_survival", "Survival"), ("d_vanished", "Vanished"), ("d_displaced", "Displaced"),
+             ("d_newcomer", "Newcomer"), ("d_rc", "Rank corr.")]
+    order = fs.ORDER4
+    M = np.array([[sim[sim.error == k][c].mean() * 100 for c, _ in comps] for k in order])
+    vmax = np.nanmax(np.abs(M)); norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
+    h = 0.5 * len(order) + 0.9
+    fig, ax = plt.subplots(figsize=(fs.SINGLE, h), gridspec_kw=dict(left=0.42, right=0.98, top=0.98, bottom=0.8 / h))
+    ax.imshow(M, cmap=fs.DIVERGING, norm=norm, aspect="auto")
+    ax.set_xticks(np.arange(-0.5, M.shape[1]), minor=True); ax.set_yticks(np.arange(-0.5, M.shape[0]), minor=True)
+    ax.grid(which="minor", color=fs.SURFACE, lw=2); ax.tick_params(which="both", length=0)
+    ax.set_xticks(range(len(comps))); ax.set_xticklabels([n for _, n in comps], rotation=35, ha="right", rotation_mode="anchor", color=fs.INK2)
+    ax.set_yticks(range(len(order))); ax.set_yticklabels([fs.LABELS[k] for k in order], color=fs.INK2)
+    for s in ax.spines.values():
+        s.set_visible(False)
+    for i in range(M.shape[0]):
+        for j in range(M.shape[1]):
+            v = M[i, j]; rgba = fs.DIVERGING(norm(v)); lum = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
+            ax.text(j, i, f"{v:+.0f}" if abs(v) >= 0.5 else "0", ha="center", va="center", fontsize=7.5,
+                    color="#ffffff" if lum < 0.55 else fs.INK)
+    fs.save(fig, OUT / "c_fingerprint")
+
+
+# --------------------------------------------------------------------------- d: inversion
+
+def d_inversion():
+    pooled = R / "error_mix_sim_pooled.csv"; on = R / "error_mix_sim_on_sweep.csv"
+    if pooled.exists():
+        mp.OUT = OUT
+        mp.inversion_pooled("error_mix_sim_pooled.csv", "d_inversion_pooled")
+    if on.exists():
+        mp.OUT = OUT
+        mp.inversion_rate("error_mix_sim_on_sweep.csv", "d_inversion_rate")
+
+
+def main() -> int:
+    OUT.mkdir(parents=True, exist_ok=True)
+    a_metrics(); b_errors(); c_fingerprint(); d_inversion()
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
