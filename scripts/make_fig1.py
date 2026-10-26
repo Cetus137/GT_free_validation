@@ -254,9 +254,7 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
     sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
     sim["rate"] = np.round(sim.rate_realised * 100) / 100
     sim = sim[sim.rate.between(0.01, 0.05)]
-    fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
-                             gridspec_kw=dict(left=0.08, right=0.99, top=0.88, bottom=0.24, wspace=0.12))
-    for ax, t in zip(axes, fs.ORDER4):
+    def draw(ax, t):
         g = sim[sim.error == t]
         pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
         a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
@@ -269,8 +267,22 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
         ax.set_title(fs.LABELS[t], loc="left", pad=3)
         ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
         ax.set_xlabel("Cells affected (%)")
+
+    # combined row
+    fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
+                             gridspec_kw=dict(left=0.08, right=0.99, top=0.88, bottom=0.24, wspace=0.12))
+    for ax, t in zip(axes, fs.ORDER4):
+        draw(ax, t)
     axes[0].set_ylabel(ylabel)
     fs.save(fig, OUT / stem)
+
+    # one file per error type, numbered in figure order
+    sub = OUT / "calibration"; sub.mkdir(exist_ok=True)
+    tag = "wio" if metric == "d_wio" else "rc"
+    for i, t in enumerate(fs.ORDER4, 1):
+        fig, ax = plt.subplots(figsize=(1.85, 2.0), gridspec_kw=dict(left=0.3, right=0.96, top=0.88, bottom=0.24))
+        draw(ax, t); ax.set_ylabel(ylabel)
+        fs.save(fig, sub / f"{tag}_{i}_{t}")
 
 
 def c_calibration_wio():
