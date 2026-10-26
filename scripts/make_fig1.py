@@ -260,8 +260,9 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
         a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
         ci = 1.96 * a.sd / np.sqrt(a.n)
         x, y = np.r_[0, 100 * a.x], np.r_[0, 100 * a.y]
-        ax.fill_between(x, y - np.r_[0, 100 * ci], y + np.r_[0, 100 * ci], color=fs.SERIES[t], alpha=0.18, lw=0)
-        ax.plot(x[1:], y[1:], color=fs.SERIES[t], ls="", marker="x", ms=5.5, mew=1.4, zorder=3)
+        ax.errorbar(x[1:], y[1:], yerr=100 * ci.values, fmt="none", ecolor=fs.SERIES[t], elinewidth=1.0,
+                    capsize=2.5, capthick=1.0, zorder=3)
+        ax.plot(x[1:], y[1:], color=fs.SERIES[t], ls="", marker="x", ms=5.5, mew=1.4, zorder=4)
         ax.plot(x, y, color=fs.SERIES[t], lw=1.2, solid_capstyle="round", zorder=2)
         ax.set_title(fs.LABELS[t], loc="left", pad=3)
         ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
