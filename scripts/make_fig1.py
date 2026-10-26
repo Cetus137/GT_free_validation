@@ -30,6 +30,12 @@ from matplotlib.patches import FancyBboxPatch  # noqa: E402
 R = ROOT / "data" / "_results"
 OUT = ROOT / "figures" / "fig1"
 fs.apply()
+# Figure 1 style: black, bold ticks and labels
+# Arial: Helvetica's bold sits inside a .ttc that matplotlib reads as regular only
+plt.rcParams.update({"font.family": ["Arial", "DejaVu Sans"],
+                     "font.weight": "bold", "axes.labelweight": "bold", "axes.titleweight": "bold",
+                     "xtick.color": fs.INK, "ytick.color": fs.INK, "axes.labelcolor": fs.INK,
+                     "axes.edgecolor": fs.INK, "xtick.major.width": 0.8, "ytick.major.width": 0.8})
 FATE = {"retained": fs.INK2, "vanished": fs.SERIES["miss"], "displaced": fs.SERIES["switch"], "newcomer": fs.SERIES["fp"]}
 
 
@@ -234,13 +240,35 @@ def c_calibration():
     fs.save(fig, OUT / "c_calibration_channels")
 
 
+def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
+    """Fine sweep (0.25-5%, held-out simulated tissues): change in one metric vs realised
+    rate, one panel per error type.  No grid, no annotation; mean with 95% CI over pairs."""
+    f = R / "ce_error_sweep_fine_delaunay.csv"
+    if not f.exists():
+        return
+    df = pd.read_csv(f)
+    sim = df[df.source.str.startswith("SIM") & (df.error != "none")]
+    fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
+                             gridspec_kw=dict(left=0.08, right=0.99, top=0.88, bottom=0.24, wspace=0.12))
+    for ax, t in zip(axes, fs.ORDER4):
+        g = sim[sim.error == t]
+        pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
+        a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
+        ci = 1.96 * a.sd / np.sqrt(a.n)
+        x, y = np.r_[0, 100 * a.x], np.r_[0, 100 * a.y]
+        ax.fill_between(x, y - np.r_[0, 100 * ci], y + np.r_[0, 100 * ci], color=fs.SERIES[t], alpha=0.18, lw=0)
+        ax.plot(x, y, color=fs.SERIES[t], **fs.LINE, **fs.MARK)
+        ax.set_title(fs.LABELS[t], loc="left", pad=3)
+        ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
+        ax.set_xlabel("Cells affected (%)")
+    axes[0].set_ylabel(ylabel)
+    fs.save(fig, OUT / stem)
+
+
 def c_calibration_wio():
-    """Simulation calibration in the style of the earlier response figure: change in
-    weighted identity overlap vs realised rate, one panel per error type, slope shown."""
-    mp.OUT = OUT
-    # same y range for both so the two metrics compare directly
-    mp.response_curves_sim(fs.ORDER4, "c_calibration", "d_wio", "Δ overlap (×100)", ylim=(-21, 1))
-    mp.response_curves_sim(fs.ORDER4, "c_calibration_rc", "d_rc", "Δ rank correlation (×100)", ylim=(-21, 1))
+    """Simulation calibration: overlap and rank correlation, fine sweep, shared y range."""
+    _calibration_fine("d_wio", "Δ overlap (×100)", "c_calibration")
+    _calibration_fine("d_rc", "Δ rank corr. (×100)", "c_calibration_rc")
 
 
 # --------------------------------------------------------------------------- d: inversion
