@@ -55,7 +55,7 @@ def calibrate(sweep_csv: Path, types: list[str], source: str | None = None) -> t
     if source is not None and source.startswith("SIM"):
         real = df[df.source.str.startswith(source)]
     else:
-        real = df[df.source.str.startswith("CE")]
+        real = df[~df.source.str.startswith("SIM")]        # any real recording (CE01, Phmamm-1-v2, ...)
         if source is not None:
             real = real[real.source == source]
     base = real[real.error == "none"].set_index(["source", "pair"])
@@ -196,7 +196,7 @@ def estimate_on_sweep(sweep_csv: Path, A, noise, baseline, types, source: str | 
     if source is not None and source.startswith("SIM"):
         real = df[df.source.str.startswith(source) & (df.error != "none") & df.error.isin(types)].copy()
     else:
-        real = df[df.source.str.startswith("CE") & (df.error != "none") & df.error.isin(types)].copy()
+        real = df[~df.source.str.startswith("SIM") & (df.error != "none") & df.error.isin(types)].copy()
         if source is not None:
             real = real[real.source == source]
     real = real.dropna(subset=CHANNELS)

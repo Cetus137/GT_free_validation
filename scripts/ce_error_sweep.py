@@ -64,7 +64,7 @@ def median_nn(pos: np.ndarray) -> float:
     return float(np.median(d[:, 1]))
 
 
-SWITCH_CAP = 3.0    # max switch partner distance in spacings; set from --switch-cap
+SWITCH_CAP = 1.1    # max switch partner distance in spacings (1.1 = adjacent cells); set from --switch-cap
 
 
 def error_config(kind: str, rate: float, spacing: float) -> ErrorConfig:
@@ -144,10 +144,27 @@ def stage_of(n: int) -> str:
     return "other"
 
 
+ASTEC_VOXEL = 0.3
+
+
+def load_dataset(a):
+    """Yield (source label, CTCTracks) for a.dataset."""
+    if a.dataset == "ce":
+        for seq in ("01", "02"):
+            yield f"CE{seq}", load_ce(a.data_root, a.cache, seq)
+    elif a.dataset == "astec":
+        from tracking_validation.astec import read_astec_tracks
+        for emb in ("Phmamm-1-v2", "Phmamm-16-v2"):
+            yield emb, read_astec_tracks(a.data_root / "ASTEC" / emb / f"{emb}_properties.xml", voxel_size=ASTEC_VOXEL)
+    else:
+        raise ValueError(a.dataset)
+
+
 def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
     rows, measures = [], []
-    for seq in ("01", "02"):
-        data = inherit_parent_labels(load_ce(a.data_root, a.cache, seq), prefer="nearest")
+    for src, data_raw in load_dataset(a):
+        seq = src
+        data = inherit_parent_labels(data_raw, prefer="nearest")
         counts = data.counts()
         start = int(np.argmax(counts >= a.min_cells))
         frames = data.frames[start:][::a.frame_stride]
@@ -168,10 +185,10 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
                                  disp_med=np.median(disp), disp_p90=np.percentile(disp, 90),
                                  density=n0 / ConvexHull(pair[0]["positions"]).volume,
                                  z_extent=float(np.ptp(pair[0]["positions"][:, 2]))))
-            meta = dict(source=f"CE{seq}", pair=start + ti * a.frame_stride, n0=n0, stage=stage_of(n0),
+            meta = dict(source=src, pair=start + ti * a.frame_stride, n0=n0, stage=stage_of(n0),
                         frame_stride=a.frame_stride)
             rows += sweep_pair(pair, box, a.k, a.cap, excluded[ti], rates, a.seeds, meta)
-        print(f"CE {seq}: {len([r for r in rows if r['source'] == f'CE{seq}'])} rows in {time.time() - t0:.0f}s", flush=True)
+        print(f"{src}: {len([r for r in rows if r['source'] == src])} rows in {time.time() - t0:.0f}s", flush=True)
     return rows, pd.DataFrame(measures)
 
 
@@ -237,19 +254,22 @@ def run_sim(a, rates, measures: pd.DataFrame) -> list[dict]:
 def main() -> int:
     global MODE, ERROR_TYPES, SWITCH_CAP
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--dataset", choices=("ce", "astec"), default="ce",
+                   help="real frames: C. elegans (CTC) or Phallusia (ASTEC); --cap defaults 15 / 45 um")
     p.add_argument("--data-root", type=Path, default=ROOT / "data")
     p.add_argument("--cache", type=Path, default=ROOT / "data" / "_cache")
     p.add_argument("--out", type=Path, default=ROOT / "data" / "_results" / "ce_error_sweep.csv")
     p.add_argument("--mode", choices=("delaunay", "knn"), default="delaunay",
                    help="neighbourhood definition (default delaunay; k is ignored then)")
     p.add_argument("--k", type=int, default=8, help="neighbours for --mode knn")
-    p.add_argument("--cap", type=float, default=15.0, help="neighbour distance cap, microns")
+    p.add_argument("--cap", type=float, default=None, help="neighbour distance cap, microns (default by dataset)")
     p.add_argument("--min-cells", type=int, default=50)
     p.add_argument("--stride", type=int, default=4, help="use every n-th frame pair")
     p.add_argument("--frame-stride", type=int, default=1,
                    help="subsample frames by this factor first (longer interval); real frames only")
-    p.add_argument("--switch-cap", type=float, default=3.0,
-                   help="switch partners drawn within this many median spacings (1.1 ≈ nearest neighbours only)")
+    p.add_argument("--switch-cap", type=float, default=1.1,
+                   help="switch partners drawn within this many median spacings (default 1.1 = adjacent cells; "
+                        "the calibration sweeps use this value, so any test sweep must match it)")
     p.add_argument("--seeds", type=int, default=3, help="error seeds per real pair")
     p.add_argument("--rates", type=float, nargs="+", default=[0.01, 0.02, 0.05, 0.10, 0.20])
     p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,
@@ -264,6 +284,8 @@ def main() -> int:
     MODE = a.mode
     ERROR_TYPES = tuple(a.types)
     SWITCH_CAP = a.switch_cap
+    if a.cap is None:
+        a.cap = 15.0 if a.dataset == "ce" else 45.0
 
     rows, measures = run_real(a, a.rates)
     if a.sim:
@@ -286,13 +308,14 @@ def main() -> int:
     print("\n### Baseline (no error) WIO by source")
     print(df[df.error == "none"].groupby("source")[["wio", "pwio", "rc", "n_eval"]].mean().to_string())
     print("\n### Drop in WIO from the same-pair baseline, mean over pairs/seeds: rows = error type, cols = nominal rate")
+    err["src"] = np.where(err.source.str.startswith("SIM"), err.source, "real")
     for src, g in err.groupby("src"):
         print(f"\n[{src}]")
         print(g.pivot_table(index="error", columns="rate", values="d_wio", aggfunc="mean").to_string())
     print("\n### Realised vs nominal rate (mean), by error type")
     print(err.pivot_table(index="error", columns="rate", values="rate_realised", aggfunc="mean").to_string())
-    print("\n### Fingerprint at nominal rate 0.10: change in decomposition (real CE)")
-    f = err[(err.src == "CE") & (err.rate == 0.10)]
+    print("\n### Fingerprint at nominal rate 0.10: change in decomposition (real frames)")
+    f = err[(err.src == "real") & (err.rate == 0.10)]
     print(f.groupby("error")[["d_wio", "d_pwio", "d_vanished", "d_displaced", "d_newcomer", "d_rc"]].mean().to_string())
     return 0
 
