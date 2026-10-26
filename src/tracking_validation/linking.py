@@ -52,17 +52,23 @@ def _match_greedy(p0: np.ndarray, p1: np.ndarray, cap: float) -> np.ndarray:
     return np.array(out, dtype=int).reshape(-1, 2)
 
 
+LAP_EXPONENT = 2.0   # link cost = distance ** LAP_EXPONENT; no-link alternative = cap ** LAP_EXPONENT.
+                     # 2 = squared (TrackMate default). Exponents below 1 make one long link
+                     # cheaper than a cascade of short ones, which suppresses hop chains.
+
+
 def _match_lap(p0: np.ndarray, p1: np.ndarray, cap: float) -> np.ndarray:
-    """Linear assignment with a no-link alternative priced at cap² (squared costs)."""
+    """Linear assignment with a no-link alternative priced at cap**alpha."""
     n0, n1 = len(p0), len(p1)
     if n0 == 0 or n1 == 0:
         return np.zeros((0, 2), dtype=int)
     big = 1e9
-    d2 = ((p0[:, None, :] - p1[None, :, :]) ** 2).sum(-1)
+    a = LAP_EXPONENT
+    d = np.sqrt(((p0[:, None, :] - p1[None, :, :]) ** 2).sum(-1))
     cost = np.full((n0 + n1, n0 + n1), big)
-    cost[:n0, :n1] = np.where(d2 <= cap ** 2, d2, big)       # real links, squared distance
-    cost[:n0, n1:] = np.where(np.eye(n0, dtype=bool), cap ** 2, big)   # t cell ends its track
-    cost[n0:, :n1] = np.where(np.eye(n1, dtype=bool), cap ** 2, big)   # t+1 cell starts a track
+    cost[:n0, :n1] = np.where(d <= cap, d ** a, big)                   # real links
+    cost[:n0, n1:] = np.where(np.eye(n0, dtype=bool), cap ** a, big)   # t cell ends its track
+    cost[n0:, :n1] = np.where(np.eye(n1, dtype=bool), cap ** a, big)   # t+1 cell starts a track
     cost[n0:, n1:] = 0.0      # auxiliary block: free, so every real cost is counted exactly once
     r, c = linear_sum_assignment(cost)
     out = [(int(i), int(j)) for i, j in zip(r, c) if i < n0 and j < n1 and cost[i, j] < big]

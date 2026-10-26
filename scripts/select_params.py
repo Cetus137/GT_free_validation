@@ -85,6 +85,7 @@ def main() -> int:
     p.add_argument("--caps", type=float, nargs="+", default=[0.5, 0.75, 1.0, 1.5, 2.0])
     p.add_argument("--gaps", type=int, nargs="+", default=[0, 1, 2])
     p.add_argument("--gap-dists", type=float, nargs="+", default=[1.0, 2.0])
+    p.add_argument("--alphas", type=float, nargs="+", default=[2.0], help="link-cost exponents to grid over")
     p.add_argument("--neigh-cap", type=float, default=15.0)
     p.add_argument("--out", type=Path, default=ROOT / "data" / "_results" / "select_params.csv")
     a = p.parse_args()
@@ -97,24 +98,27 @@ def main() -> int:
         sp = float(np.median([np.median(KDTree(f["positions"]).query(f["positions"], k=2)[0][:, 1]) for f in gt[::10]]))
         hi = gt[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         det, _ = apply_tracking_errors(gt, ErrorConfig(p_miss=a.dropout, lambda_fp=0.0, p_switch=0.0), box, np.random.default_rng(11))
-        for cap, gap, gd in itertools.product(a.caps, a.gaps, a.gap_dists):
+        import tracking_validation.linking as lk
+        for alpha, cap, gap, gd in itertools.product(a.alphas, a.caps, a.gaps, a.gap_dists):
             if gap == 0 and gd != a.gap_dists[0]:
                 continue                      # gap distance is irrelevant without gap closing
+            lk.LAP_EXPONENT = alpha
             res = close_gaps(link_frames(det, cap * sp, "lap"), gap, gd * sp)
             tr = truth_rate(res.frames, keep)
             mc = metric_criterion(res.frames, keep, a.neigh_cap)
-            rows.append(dict(seq=seq, cap=cap, max_gap=gap, gap_dist=gd, n_tracks=res.n_tracks,
+            rows.append(dict(seq=seq, alpha=alpha, cap=cap, max_gap=gap, gap_dist=gd, n_tracks=res.n_tracks,
                              truth=100 * tr, **{k: 100 * v for k, v in mc.items()}))
-            print(f"{seq} cap {cap:4.2f} gap {gap} gd {gd:3.1f} | truth {100*tr:5.2f} | metric {100*mc['criterion']:5.2f} "
+            print(f"{seq} a {alpha:3.1f} cap {cap:4.2f} gap {gap} gd {gd:3.1f} | truth {100*tr:5.2f} | metric {100*mc['criterion']:5.2f} "
                   f"(ends {100*mc['ends']:4.2f} starts {100*mc['starts']:4.2f} outl {100*mc['outliers']:4.2f})", flush=True)
     df = pd.DataFrame(rows); df.to_csv(a.out, index=False)
     pd.set_option("display.width", 200); pd.set_option("display.precision", 2)
-    g = df.groupby(["cap", "max_gap", "gap_dist"])[["truth", "criterion", "ends", "starts", "outliers"]].mean().reset_index()
+    keys = ["alpha", "cap", "max_gap", "gap_dist"]
+    g = df.groupby(keys)[["truth", "criterion", "ends", "starts", "outliers"]].mean().reset_index()
     rho = spearmanr(g.truth, g.criterion).statistic
     best_t = g.loc[g.truth.idxmin()]; best_m = g.loc[g.criterion.idxmin()]
     print(f"\nSpearman(truth, metric criterion) over {len(g)} settings: {rho:.2f}")
-    print(f"truth-optimal : cap {best_t.cap} gap {int(best_t.max_gap)} gd {best_t.gap_dist} -> truth {best_t.truth:.2f}%")
-    print(f"metric-chosen : cap {best_m.cap} gap {int(best_m.max_gap)} gd {best_m.gap_dist} -> truth {best_m.truth:.2f}% "
+    print(f"truth-optimal : alpha {best_t.alpha} cap {best_t.cap} gap {int(best_t.max_gap)} gd {best_t.gap_dist} -> truth {best_t.truth:.2f}%")
+    print(f"metric-chosen : alpha {best_m.alpha} cap {best_m.cap} gap {int(best_m.max_gap)} gd {best_m.gap_dist} -> truth {best_m.truth:.2f}% "
           f"(regret {best_m.truth - best_t.truth:.2f} points)")
     print("\nfull grid (both recordings averaged):"); print(g.to_string(index=False))
     print(f"\nwrote {a.out}")
