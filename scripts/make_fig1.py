@@ -139,14 +139,48 @@ def b_errors():
 
 # --------------------------------------------------------------------------- c: fingerprint with survival
 
-def c_fingerprint():
+COMPS = [("d_survival", "Survival"), ("d_vanished", "Vanished"), ("d_displaced", "Displaced"),
+         ("d_newcomer", "Newcomer"), ("d_rc", "Rank corr.")]
+
+
+def _sim10():
     df = mp._load_sweep("slab")
     if df is None:
-        return
+        return None
     sim = df[(df.src == "sim") & (df.rate == 0.10)].copy()
     sim["d_survival"] = sim.survival - 1.0
-    comps = [("d_survival", "Survival"), ("d_vanished", "Vanished"), ("d_displaced", "Displaced"),
-             ("d_newcomer", "Newcomer"), ("d_rc", "Rank corr.")]
+    return sim
+
+
+def c_fingerprint():
+    """Grouped bars: for each channel, the change at 10% error, one bar per error type."""
+    sim = _sim10()
+    if sim is None:
+        return
+    order = fs.ORDER4
+    fig, ax = plt.subplots(figsize=(fs.DOUBLE * 0.6, 2.7), gridspec_kw=dict(left=0.15, right=0.99, top=0.95, bottom=0.36))
+    w = 0.19
+    for i, t in enumerate(order):
+        g = sim[sim.error == t]
+        means = [100 * g[c].mean() for c, _ in COMPS]
+        sds = [100 * g[c].std() for c, _ in COMPS]
+        x = np.arange(len(COMPS)) + (i - 1.5) * w
+        ax.bar(x, means, width=w - 0.02, color=fs.SERIES[t], lw=0, zorder=3)
+        ax.errorbar(x, means, yerr=sds, fmt="none", ecolor=fs.INK2, elinewidth=0.8, capsize=0, zorder=4)
+    ax.axhline(0, color=fs.AXIS, lw=0.8)
+    ax.set_xticks(range(len(COMPS))); ax.set_xticklabels([n for _, n in COMPS])
+    ax.set_ylabel("Change at 10% error (×100)"); fs.grid(ax)
+    ax.spines["bottom"].set_visible(False); ax.tick_params(axis="x", length=0)
+    fig.legend(handles=[fs.dot_handle(fs.LABELS[t], fs.SERIES[t]) for t in order], loc="lower left",
+               bbox_to_anchor=(0.15, 0.0), ncol=2, handletextpad=0.3, columnspacing=1.2)
+    fs.save(fig, OUT / "c_fingerprint")
+
+
+def c_fingerprint_table():
+    sim = _sim10()
+    if sim is None:
+        return
+    comps = COMPS
     order = fs.ORDER4
     M = np.array([[sim[sim.error == k][c].mean() * 100 for c, _ in comps] for k in order])
     vmax = np.nanmax(np.abs(M)); norm = TwoSlopeNorm(vmin=-vmax, vcenter=0.0, vmax=vmax)
@@ -164,7 +198,7 @@ def c_fingerprint():
             v = M[i, j]; rgba = fs.DIVERGING(norm(v)); lum = 0.2126 * rgba[0] + 0.7152 * rgba[1] + 0.0722 * rgba[2]
             ax.text(j, i, f"{v:+.0f}" if abs(v) >= 0.5 else "0", ha="center", va="center", fontsize=7.5,
                     color="#ffffff" if lum < 0.55 else fs.INK)
-    fs.save(fig, OUT / "c_fingerprint")
+    fs.save(fig, OUT / "c_fingerprint_table")
 
 
 # --------------------------------------------------------------------------- d: inversion
@@ -181,7 +215,7 @@ def d_inversion():
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    a_metrics(); b_errors(); c_fingerprint(); d_inversion()
+    a_metrics(); b_errors(); c_fingerprint(); c_fingerprint_table(); d_inversion()
     return 0
 
 
