@@ -294,6 +294,34 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
         fs.save(fig, sub / f"{tag}_{i}_{t}")
 
 
+def c_calibration_combined(ylim=(-6, 0.5)):
+    """WIO (top row) and RC (bottom row) in one file, no titles or x label."""
+    f = R / "ce_error_sweep_fine_delaunay.csv"
+    if not f.exists():
+        return
+    df = pd.read_csv(f)
+    sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
+    sim["rate"] = np.round(sim.rate_realised * 100) / 100
+    sim = sim[sim.rate.between(0.01, 0.05)]
+    fig, axes = plt.subplots(2, 4, figsize=(fs.DOUBLE, 3.2), sharex=True, sharey=True,
+                             gridspec_kw=dict(left=0.08, right=0.99, top=0.97, bottom=0.08, wspace=0.12, hspace=0.12))
+    for r, (metric, ylabel) in enumerate((("d_wio", "Δ WIO (×100)"), ("d_rc", "Δ RC (×100)"))):
+        for c, t in enumerate(fs.ORDER4):
+            ax = axes[r, c]
+            g = sim[sim.error == t]
+            pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
+            a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
+            ci = 1.96 * a.sd / np.sqrt(a.n)
+            x, y = np.r_[0, 100 * a.x], np.r_[0, 100 * a.y]
+            ax.errorbar(x[1:], y[1:], yerr=100 * ci.values, fmt="none", ecolor=fs.SERIES[t], elinewidth=1.0,
+                        capsize=2.5, capthick=1.0, zorder=3)
+            ax.plot(x[1:], y[1:], color=fs.SERIES[t], ls="", marker="x", ms=5.5, mew=1.4, zorder=4)
+            ax.plot(x, y, color=fs.SERIES[t], lw=1.2, solid_capstyle="round", zorder=2)
+            ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
+        axes[r, 0].set_ylabel(ylabel)
+    fs.save(fig, OUT / "c_calibration_wio_rc_bare")
+
+
 def c_calibration_wio():
     """Simulation calibration: overlap and rank correlation, fine sweep, shared y range."""
     _calibration_fine("d_wio", "Δ WIO (×100)", "c_calibration")
@@ -318,7 +346,7 @@ def d_inversion():
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    a_metrics(); b_errors(); c_calibration(); c_calibration_wio(); c_fingerprint(); c_fingerprint_table(); d_inversion()
+    a_metrics(); b_errors(); c_calibration(); c_calibration_wio(); c_calibration_combined(); c_fingerprint(); c_fingerprint_table(); d_inversion()
     return 0
 
 
