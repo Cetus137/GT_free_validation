@@ -46,20 +46,45 @@ def run(frames, variant, exclude=False):
     return rows
 
 
+def load_dataset(name: str):
+    """Yield (sequence label, CTCTracks) for a dataset: 'ce' or 'astec'."""
+    if name == "ce":
+        for seq in ("01", "02"):
+            yield seq, sweep.load_ce(ROOT / "data", ROOT / "data" / "_cache", seq)
+    elif name == "astec":
+        from tracking_validation.astec import read_astec_tracks
+        for emb in ("Phmamm-1-v2", "Phmamm-16-v2"):
+            yield emb, read_astec_tracks(ROOT / "data" / "ASTEC" / emb / f"{emb}_properties.xml", voxel_size=ASTEC_VOXEL)
+    else:
+        raise ValueError(name)
+
+
+ASTEC_VOXEL = 0.3   # microns per voxel, isotropic (published ASTEC sampling; to be confirmed)
+
+
 def main() -> int:
+    import argparse
+    p = argparse.ArgumentParser()
+    p.add_argument("--dataset", choices=("ce", "astec"), default="ce")
+    p.add_argument("--min-cells", type=int, default=50)
+    p.add_argument("--cap", type=float, default=None, help="neighbour cap in microns (default 15 for ce, 45 for astec)")
+    a = p.parse_args()
+    global CAP
+    CAP = a.cap if a.cap is not None else (15.0 if a.dataset == "ce" else 45.0)
     rows = []
-    for seq in ("01", "02"):
-        data = sweep.load_ce(ROOT / "data", ROOT / "data" / "_cache", seq)
-        start = int(np.argmax(data.counts() >= 50))
+    for seq, data in load_dataset(a.dataset):
+        start = int(np.argmax(data.counts() >= a.min_cells))
         raw = data.frames[start:]
         inh = inherit_parent_labels(data, prefer="nearest").frames[start:]
         for r in run(raw, "raw") + run(inh, "inherit") + run(inh, "inherit + exclude", exclude=True):
             rows.append({**r, "seq": seq, "frame": start + r["pair"]})
     df = pd.DataFrame(rows)
-    out = ROOT / "data" / "_results" / "ce_division_handling.csv"
+    out = ROOT / "data" / "_results" / f"{a.dataset}_division_handling.csv"
     df.to_csv(out, index=False)
     pd.set_option("display.width", 200); pd.set_option("display.precision", 3)
-    print(df.groupby(["variant", "division_pair"])[["wio", "rc", "vanished", "displaced", "newcomer", "survival"]].mean().to_string())
+    g = df.groupby(["variant", "division_pair"])
+    s = g[["wio", "rc", "vanished", "displaced", "newcomer", "survival"]].mean(); s["pairs"] = g.size(); s["cells"] = g.n_eval.mean().round(0)
+    print(f"dataset {a.dataset}, cap {CAP} µm"); print(s.to_string())
     print("wrote", out)
     return 0
 
