@@ -254,7 +254,7 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
     sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
     sim["rate"] = np.round(sim.rate_realised * 100) / 100
     sim = sim[sim.rate.between(0.01, 0.05)]
-    def draw(ax, t):
+    def draw(ax, t, labels=True):
         g = sim[sim.error == t]
         pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
         a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
@@ -264,9 +264,18 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
                     capsize=2.5, capthick=1.0, zorder=3)
         ax.plot(x[1:], y[1:], color=fs.SERIES[t], ls="", marker="x", ms=5.5, mew=1.4, zorder=4)
         ax.plot(x, y, color=fs.SERIES[t], lw=1.2, solid_capstyle="round", zorder=2)
-        ax.set_title(fs.LABELS[t], loc="left", pad=3)
         ax.set_xlim(0, 5.3); ax.set_xticks([0, 1, 2, 3, 4, 5]); ax.set_ylim(*ylim)
-        ax.set_xlabel("Cells affected (%)")
+        if labels:
+            ax.set_title(fs.LABELS[t], loc="left", pad=3)
+            ax.set_xlabel("Cells affected (%)")
+
+    # combined row without titles or x label (labels added in layout)
+    fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 1.7), sharey=True,
+                             gridspec_kw=dict(left=0.08, right=0.99, top=0.96, bottom=0.14, wspace=0.12))
+    for ax, t in zip(axes, fs.ORDER4):
+        draw(ax, t, labels=False)
+    axes[0].set_ylabel(ylabel)
+    fs.save(fig, OUT / f"{stem}_bare")
 
     # combined row
     fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
