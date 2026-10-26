@@ -247,7 +247,8 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
     if not f.exists():
         return
     df = pd.read_csv(f)
-    sim = df[df.source.str.startswith("SIM") & (df.error != "none")]
+    # evenly spaced points: whole-percent nominal rates only
+    sim = df[df.source.str.startswith("SIM") & (df.error != "none") & df.rate.round(4).isin([0.01, 0.02, 0.03, 0.04, 0.05])]
     fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
                              gridspec_kw=dict(left=0.08, right=0.99, top=0.88, bottom=0.24, wspace=0.12))
     for ax, t in zip(axes, fs.ORDER4):
