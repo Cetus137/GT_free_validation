@@ -46,12 +46,12 @@ def _load_sweep(shape="slab"):
     return df
 
 
-def _curve(df, kind, src):
+def _curve(df, kind, src, metric="d_wio"):
     g = df[(df.error == kind) & (df.src == src)]
     if src == "sim_only":
         # simulation treated as the primary data: mean over seeds with 95% CI over simulated pairs
         g = df[(df.error == kind) & (df.src == "sim")]
-        pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=("d_wio", "mean")).reset_index()
+        pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
         a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
         a["lo"] = a.y - 1.96 * a.sd / np.sqrt(a.n); a["hi"] = a.y + 1.96 * a.sd / np.sqrt(a.n)
         return a
@@ -101,8 +101,9 @@ def response_curves(order, stem):
     fs.save(fig, OUT / stem)
 
 
-def response_curves_sim(order, stem):
-    """Simulation-only response curves: one line per type, CI over simulated pairs."""
+def response_curves_sim(order, stem, metric="d_wio", ylabel="Δ overlap (×100)", ylim=None):
+    """Simulation-only response curves: one line per type, CI over simulated pairs.
+    ``metric`` is the sweep column (d_wio, d_rc, ...); ``ylim`` fixes a shared y range."""
     df = _load_sweep("slab")
     if df is None:
         return
@@ -112,22 +113,23 @@ def response_curves_sim(order, stem):
                                               bottom=0.24 if nrow == 1 else 0.14, wspace=0.15, hspace=0.55))
     axes = np.atleast_1d(axes).ravel(); ymin = 0
     for ax, kind in zip(axes, order):
-        col = fs.SERIES[kind]; c = _curve(df, kind, "sim_only")
+        col = fs.SERIES[kind]; c = _curve(df, kind, "sim_only", metric)
         x, y = np.r_[0, c.x * 100], np.r_[0, c.y * 100]
         ax.fill_between(x, np.r_[0, c.lo * 100], np.r_[0, c.hi * 100], color=col, alpha=0.18, lw=0)
         ax.plot(x, y, color=col, **fs.LINE, **fs.MARK)
         slope = -np.sum(c.x * c.y) / np.sum(c.x ** 2)
         ax.set_title(fs.LABELS[kind], loc="left", pad=3)
-        ax.text(0.97, 0.95, f"{slope:.2f} pt / %", transform=ax.transAxes, ha="right", va="top", fontsize=7.5, color=fs.INK2)
+        # bottom-left: lines start at the origin (top-left) and fall to the right, so this corner is always free
+        ax.text(0.04, 0.05, f"{slope:.2f} pt / %", transform=ax.transAxes, ha="left", va="bottom", fontsize=7.5, color=fs.INK2)
         fs.grid(ax); ax.set_xlim(0, 21); ax.set_xticks([0, 5, 10, 20]); ax.set_xlabel("Cells affected (%)")
-        ymin = min(ymin, float(y.min()))
+        ymin = min(ymin, float(np.min(np.r_[y, np.r_[0, c.lo * 100]])))
     for ax in axes[n:]:
         ax.axis("off")
-    lo = np.floor(ymin / 5) * 5 - 1
+    lo = ylim[0] if ylim else np.floor(ymin / 5) * 5 - 1
     for ax in axes[:n]:
         ax.set_ylim(lo, 1); ax.set_yticks(np.arange(0, lo, -5))
     for i in range(0, n, ncol):
-        axes[i].set_ylabel("Δ overlap (×100)")
+        axes[i].set_ylabel(ylabel)
     fs.save(fig, OUT / stem)
 
 

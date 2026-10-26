@@ -238,7 +238,9 @@ def c_calibration_wio():
     """Simulation calibration in the style of the earlier response figure: change in
     weighted identity overlap vs realised rate, one panel per error type, slope shown."""
     mp.OUT = OUT
-    mp.response_curves_sim(fs.ORDER4, "c_calibration")
+    # same y range for both so the two metrics compare directly
+    mp.response_curves_sim(fs.ORDER4, "c_calibration", "d_wio", "Δ overlap (×100)", ylim=(-21, 1))
+    mp.response_curves_sim(fs.ORDER4, "c_calibration_rc", "d_rc", "Δ rank correlation (×100)", ylim=(-21, 1))
 
 
 # --------------------------------------------------------------------------- d: inversion
