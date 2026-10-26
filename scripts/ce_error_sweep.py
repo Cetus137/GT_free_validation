@@ -208,7 +208,7 @@ def run_sim(a, rates, measures: pd.DataFrame) -> list[dict]:
             continue
         m = stage_means.loc[stage]
         t0 = time.time()
-        for seed in range(a.sim_seeds):
+        for seed in range(a.sim_seed0, a.sim_seed0 + a.sim_seeds):
             cfg = sim_config_from_stage(m, a.sim_cells, seed, shape=a.sim_shape)
             sim = simulate_sequence(cfg)
             pair = frames_from_array(sim.frames)
@@ -259,6 +259,7 @@ def main() -> int:
                    help="slab: box depth = embryo z extent at that stage, same density")
     p.add_argument("--sim-cells", type=int, default=1000)
     p.add_argument("--sim-seeds", type=int, default=5)
+    p.add_argument("--sim-seed0", type=int, default=0, help="first simulation seed (use a different offset for held-out tissues)")
     a = p.parse_args()
     MODE = a.mode
     ERROR_TYPES = tuple(a.types)

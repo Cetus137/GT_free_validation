@@ -211,6 +211,10 @@ def d_inversion():
     if on.exists():
         mp.OUT = OUT
         mp.inversion_rate("error_mix_sim_on_sweep.csv", "d_inversion_rate")
+    fine = R / "error_mix_sim_fine_on_sweep.csv"
+    if fine.exists():
+        mp.OUT = OUT
+        mp.inversion_rate("error_mix_sim_fine_on_sweep.csv", "d_inversion_rate_fine", lim=5.5, ticks=(0, 1, 2, 3, 4, 5))
 
 
 def main() -> int:

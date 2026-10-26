@@ -317,8 +317,14 @@ def main() -> int:
         A, noise, baseline = calibrate(a.sweep, types, source="SIM")
         pd.set_option("display.width", 220); pd.set_option("display.precision", 3)
         print("### SIMULATION-ONLY. Response matrix (x100 per 1%):"); print(A.round(3).to_string())
-        on = estimate_on_sweep(a.sweep, A, noise, baseline, types, source="SIM")
+        on = estimate_on_sweep(a.on_sweep or a.sweep, A, noise, baseline, types, source="SIM")
         on.to_csv(a.out.with_name(a.out.stem + "_on_sweep.csv"), index=False)
+        g = on.groupby(["error", "rate"]).agg(true=("rate_realised", "mean"), est=("est_same", "mean")).reset_index()
+        print("### per-type recovery (est/true):")
+        print(g.assign(rec=(g.est / g.true).round(2)).pivot(index="error", columns="rate", values="rec").to_string())
+        if a.skip_mixtures:
+            print(f"wrote {a.out.with_name(a.out.stem + '_on_sweep.csv')}")
+            return 0
         mix, pooled = validate_sim(a, A, noise, baseline, types, n_mixtures=a.n_mixtures, stage=a.sim_stage)
         mix.to_csv(a.out, index=False); pooled.to_csv(a.out.with_name(a.out.stem + "_pooled.csv"), index=False)
         report(mix, types, "simulation, single pairs")
