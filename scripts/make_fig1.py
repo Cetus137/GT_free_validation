@@ -211,23 +211,26 @@ def c_calibration():
         return
     sim = df[df.src == "sim"].copy()
     sim["d_survival"] = sim.survival - 1.0
-    fig, axes = plt.subplots(1, len(COMPS), figsize=(fs.DOUBLE, 2.3), sharey=True,
+    # channel colours: vanished / displaced / newcomer match panel a; survival and rank corr. added
+    ch_col = {"d_survival": "#eda100", "d_vanished": FATE["vanished"], "d_displaced": FATE["displaced"],
+              "d_newcomer": FATE["newcomer"], "d_rc": "#6250d6"}
+    fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.3), sharey=True,
                              gridspec_kw=dict(left=0.07, right=0.99, top=0.88, bottom=0.36, wspace=0.12))
-    for ax, (col, name) in zip(axes, COMPS):
-        for t in fs.ORDER4:
-            g = sim[sim.error == t]
+    for ax, t in zip(axes, fs.ORDER4):
+        g = sim[sim.error == t]
+        for col, name in COMPS:
             pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(col, "mean")).reset_index()
             a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
             ci = 1.96 * a.sd / np.sqrt(a.n)
             x, y = np.r_[0, 100 * a.x], np.r_[0, 100 * a.y]
-            ax.fill_between(x, y - np.r_[0, 100 * ci], y + np.r_[0, 100 * ci], color=fs.SERIES[t], alpha=0.15, lw=0)
-            ax.plot(x, y, color=fs.SERIES[t], **fs.LINE, **{**fs.MARK, "ms": 3.5})
+            ax.fill_between(x, y - np.r_[0, 100 * ci], y + np.r_[0, 100 * ci], color=ch_col[col], alpha=0.15, lw=0)
+            ax.plot(x, y, color=ch_col[col], **fs.LINE, **{**fs.MARK, "ms": 3.5})
         ax.axhline(0, color=fs.AXIS, lw=0.8)
-        ax.set_title(name, loc="left", pad=3); fs.grid(ax)
-        ax.set_xlim(0, 21); ax.set_xticks([0, 10, 20]); ax.set_xlabel("Cells affected (%)")
+        ax.set_title(fs.LABELS[t], loc="left", pad=3); fs.grid(ax)
+        ax.set_xlim(0, 21); ax.set_xticks([0, 5, 10, 20]); ax.set_xlabel("Cells affected (%)")
     axes[0].set_ylabel("Change (×100)")
-    fig.legend(handles=[fs.dot_handle(fs.LABELS[t], fs.SERIES[t]) for t in fs.ORDER4], loc="lower left",
-               bbox_to_anchor=(0.07, 0.0), ncol=4, handletextpad=0.3, columnspacing=1.2)
+    fig.legend(handles=[fs.dot_handle(name, ch_col[col]) for col, name in COMPS], loc="lower left",
+               bbox_to_anchor=(0.07, 0.0), ncol=5, handletextpad=0.3, columnspacing=1.2)
     fs.save(fig, OUT / "c_calibration")
 
 
