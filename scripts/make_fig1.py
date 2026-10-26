@@ -247,8 +247,11 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
     if not f.exists():
         return
     df = pd.read_csv(f)
-    # evenly spaced points: whole-percent nominal rates only
-    sim = df[df.source.str.startswith("SIM") & (df.error != "none") & df.rate.round(4).isin([0.01, 0.02, 0.03, 0.04, 0.05])]
+    # evenly spaced points: bin each simulated pair by its REALISED rate into whole-percent bins
+    # (1%: 0.5-1.5, 2%: 1.5-2.5, ...), so crosses sit near 1..5% for every error type
+    sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
+    sim["rate"] = np.round(sim.rate_realised * 100) / 100
+    sim = sim[sim.rate.between(0.01, 0.05)]
     fig, axes = plt.subplots(1, 4, figsize=(fs.DOUBLE, 2.0), sharey=True,
                              gridspec_kw=dict(left=0.08, right=0.99, top=0.88, bottom=0.24, wspace=0.12))
     for ax, t in zip(axes, fs.ORDER4):
