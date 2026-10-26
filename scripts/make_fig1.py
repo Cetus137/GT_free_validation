@@ -231,7 +231,14 @@ def c_calibration():
     axes[0].set_ylabel("Change (×100)")
     fig.legend(handles=[fs.dot_handle(name, ch_col[col]) for col, name in COMPS], loc="lower left",
                bbox_to_anchor=(0.07, 0.0), ncol=5, handletextpad=0.3, columnspacing=1.2)
-    fs.save(fig, OUT / "c_calibration")
+    fs.save(fig, OUT / "c_calibration_channels")
+
+
+def c_calibration_wio():
+    """Simulation calibration in the style of the earlier response figure: change in
+    weighted identity overlap vs realised rate, one panel per error type, slope shown."""
+    mp.OUT = OUT
+    mp.response_curves_sim(fs.ORDER4, "c_calibration")
 
 
 # --------------------------------------------------------------------------- d: inversion
@@ -252,7 +259,7 @@ def d_inversion():
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    a_metrics(); b_errors(); c_calibration(); c_fingerprint(); c_fingerprint_table(); d_inversion()
+    a_metrics(); b_errors(); c_calibration(); c_calibration_wio(); c_fingerprint(); c_fingerprint_table(); d_inversion()
     return 0
 
 
