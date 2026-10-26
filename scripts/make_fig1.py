@@ -268,8 +268,8 @@ def _calibration_fine(metric: str, ylabel: str, stem: str, ylim=(-6, 0.5)):
 
 def c_calibration_wio():
     """Simulation calibration: overlap and rank correlation, fine sweep, shared y range."""
-    _calibration_fine("d_wio", "Δ overlap (×100)", "c_calibration")
-    _calibration_fine("d_rc", "Δ rank corr. (×100)", "c_calibration_rc")
+    _calibration_fine("d_wio", "Δ WIO (×100)", "c_calibration")
+    _calibration_fine("d_rc", "Δ RC (×100)", "c_calibration_rc")
 
 
 # --------------------------------------------------------------------------- d: inversion
