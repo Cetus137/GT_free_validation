@@ -10,6 +10,8 @@ Stages
          picks three operating points (balanced = best F1; high recall; high precision)
   run    detections for 01 and 02 at each operating point -> data/_results/detections/ce_{seq}_{op}.csv
          and per-frame counts -> data/_results/detection_quality.csv
+  --noise L / --blur-z B  degrade the images first (noise sd = L x signal range; z blur sd = B um);
+         files get a _nL / _bzB tag
   plots  figures/detection/: recall/precision vs frame, match distances, slice overlays
 """
 from __future__ import annotations
@@ -44,10 +46,40 @@ BUDGET = 0.05        # max miss or FP rate (fraction of GT cells) for the skewed
 
 # --------------------------------------------------------------------------- candidates
 
+# Image degradations used to make the detector err more (thresholds stay the clean-tuned ones):
+#   NOISE   Gaussian noise, sd as a fraction of the frame's signal range (p99.9 - p50) -> mostly false positives
+#   BLUR_Z  Gaussian blur along z, sd in microns -> nuclei stacked in z merge -> mostly misses
+NOISE = 0.0
+BLUR_Z = 0.0
+
+
+def SUFFIX() -> str:
+    """'' for the clean images, e.g. '_n0.4', '_bz1', '_n0.4_bz0.7' for degraded ones."""
+    return (f"_n{NOISE:g}" if NOISE else "") + (f"_bz{BLUR_Z:g}" if BLUR_Z else "")
+
+
+def tag(seq: str) -> str:
+    return seq + SUFFIX()
+
+
+def degrade(im: np.ndarray, noise: float, blur_z: float, seed: int) -> np.ndarray:
+    """Blur along z (sd ``blur_z`` microns), then add Gaussian noise with sd = noise x (p99.9 - p50)."""
+    if noise <= 0 and blur_z <= 0:
+        return im
+    a = im.astype(np.float32)
+    if blur_z > 0:
+        from scipy import ndimage as ndi
+        a = ndi.gaussian_filter(a, (blur_z / VOXEL[2], 0, 0), mode="nearest")
+    if noise > 0:
+        lo, hi = np.percentile(a, [50, 99.9])
+        a += np.random.default_rng(seed).normal(0.0, noise * (hi - lo), a.shape).astype(np.float32)
+    return np.clip(a, 0, 65535)
+
+
 def _frame_job(args):
-    seq, t = args
+    seq, t, noise, blur_z = args
     import tifffile
-    im = tifffile.imread(DATA / seq / f"t{t:03d}.tif")
+    im = degrade(tifffile.imread(DATA / seq / f"t{t:03d}.tif"), noise, blur_z, seed=1000 * int(seq) + t)
     g = tifffile.imread(DATA / f"{seq}_GT" / "TRA" / f"man_track{t:03d}.tif")
     ids, com = label_centroids(g)
     c = D.candidates(im, VOXEL, floor=FLOOR)
@@ -58,19 +90,19 @@ def stage_cands(workers: int) -> None:
     for seq in SEQS:
         frames = sorted(find_frame_files(DATA / f"{seq}_GT" / "TRA"))
         with ProcessPoolExecutor(workers) as ex:
-            out = list(ex.map(_frame_job, [(seq, t) for t in frames]))
+            out = list(ex.map(_frame_job, [(seq, t, NOISE, BLUR_Z) for t in frames]))
         cf, cp, cr, cs, gf, gi, gp = [], [], [], [], [], [], []
         for t, c, ids, gt in out:
             cf.append(np.full(len(c.pos), t)); cp.append(c.pos); cr.append(c.response); cs.append(c.sigma)
             gf.append(np.full(len(ids), t)); gi.append(ids); gp.append(gt)
-        np.savez_compressed(CACHE / f"log_cands_{seq}.npz", frame=np.concatenate(cf), pos=np.concatenate(cp),
+        np.savez_compressed(CACHE / f"log_cands_{tag(seq)}.npz", frame=np.concatenate(cf), pos=np.concatenate(cp),
                             response=np.concatenate(cr), sigma=np.concatenate(cs),
                             gt_frame=np.concatenate(gf), gt_id=np.concatenate(gi), gt_pos=np.concatenate(gp))
         print(f"{seq}: {len(frames)} frames, {sum(len(o[1].pos) for o in out)} candidates", flush=True)
 
 
 def load(seq: str, zoff: float = 0.0):
-    z = np.load(CACHE / f"log_cands_{seq}.npz")
+    z = np.load(CACHE / f"log_cands_{tag(seq)}.npz")
     frames = np.unique(z["gt_frame"])
     per = {}
     for t in frames:
@@ -171,11 +203,11 @@ def stage_run() -> None:
                 tp = int((m >= 0).sum())
                 qrows.append(dict(seq=seq, op=name, frame=t, n_gt=len(gt), n_det=len(k), tp=tp,
                                   fp=len(k) - tp, fn=len(gt) - tp))
-            pd.DataFrame(det_rows).to_csv(out / f"ce_{seq}_{name}.csv", index=False)
+            pd.DataFrame(det_rows).to_csv(out / f"ce_{tag(seq)}_{name}.csv", index=False)
             q = pd.DataFrame([r for r in qrows if r["seq"] == seq and r["op"] == name])
             summ.append(dict(seq=seq, op=name, **p, **_summ(q)))
-    pd.DataFrame(qrows).to_csv(RES / "detection_quality.csv", index=False)
-    s = pd.DataFrame(summ); s.to_csv(RES / "detection_summary.csv", index=False)
+    pd.DataFrame(qrows).to_csv(RES / f"detection_quality{SUFFIX()}.csv", index=False)
+    s = pd.DataFrame(summ); s.to_csv(RES / f"detection_summary{SUFFIX()}.csv", index=False)
     print(f"### detection quality (z offset {off:+.2f} µm applied; 01 = tuning, 02 = test)")
     print(s.round(4).to_string(index=False))
 
@@ -248,7 +280,13 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--stage", choices=("all", "cands", "zoff", "sweep", "run", "plots"), default="all")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    p.add_argument("--noise", type=float, default=0.0,
+                   help="add Gaussian noise (sd = this x frame signal range) before detection; with noise > 0 "
+                        "only the cands and run stages make sense (thresholds and z offset stay the clean ones)")
+    p.add_argument("--blur-z", type=float, default=0.0, help="blur along z first (sd in microns); same rules as --noise")
     a = p.parse_args()
+    global NOISE, BLUR_Z
+    NOISE, BLUR_Z = a.noise, a.blur_z
     CACHE.mkdir(exist_ok=True); RES.mkdir(exist_ok=True)
     if a.stage in ("all", "cands"):
         stage_cands(a.workers)
