@@ -34,7 +34,7 @@ sys.path.insert(0, str(ROOT / "src"))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from tracking_validation import ErrorConfig, apply_tracking_errors, realised_error_rates  # noqa: E402
-from tracking_validation.lineage import division_affected_cells, inherit_parent_labels  # noqa: E402
+from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, subsample_frames  # noqa: E402
 import ce_error_sweep as sweep  # noqa: E402
 
 CHANNELS = ["survival", "vanished", "displaced", "newcomer", "rc", "prc", "pwio"]
@@ -164,7 +164,7 @@ def validate_constant(a, A, noise, baseline, types, n_pairs: int = 30, scale: fl
     for seq in seqs:
         data = inherit_parent_labels(sweep.load_ce(a.data_root, a.cache, seq), prefer="nearest")
         start = int(np.argmax(data.counts() >= 50))
-        frames = data.frames[start:][::frame_stride]
+        frames = subsample_frames(data.frames[start:], frame_stride)
         excluded = division_affected_cells(frames, k=8, max_neighbour_distance=a.cap, neighbourhood_mode=sweep.MODE)
         hi = frames[-1]["positions"].max(axis=0); box = tuple(float(v) for v in (hi + 2.0))
         held = [ti for ti in range(len(frames) - 1) if ti % 4 != 0]

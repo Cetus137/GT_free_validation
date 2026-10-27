@@ -28,7 +28,7 @@ from scipy.spatial import KDTree
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src")); sys.path.insert(0, str(ROOT / "scripts"))
 
-from tracking_validation.lineage import division_affected_cells, inherit_parent_labels  # noqa: E402
+from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, subsample_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed, _frame_neighbour_map_delaunay  # noqa: E402
 import ce_error_sweep as sweep  # noqa: E402
 
@@ -100,7 +100,7 @@ def main() -> int:
         data = inherit_parent_labels(sweep.load_ce(ROOT / "data", ROOT / "data" / "_cache", seq), prefer="nearest")
         start = int(np.argmax(data.counts() >= 50))
         for stride in a.strides:
-            gt = data.frames[start:][::stride]
+            gt = subsample_frames(data.frames[start:], stride)
             excl = division_affected_cells(gt, k=8, max_neighbour_distance=a.cap, neighbourhood_mode="delaunay")
             for t in range(0, len(gt) - 1, 2):
                 pair = [gt[t], gt[t + 1]]

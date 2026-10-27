@@ -43,7 +43,7 @@ from tracking_validation import (  # noqa: E402
     apply_tracking_errors, frames_from_array, realised_error_rates, simulate_sequence,
 )
 from tracking_validation.ctc import read_ctc_tracks  # noqa: E402
-from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, mask_cells  # noqa: E402
+from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, mask_cells, subsample_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
 
 ERROR_TYPES = ("miss", "fp", "switch", "frag", "merge", "split")   # filtered by --types
@@ -167,7 +167,7 @@ def run_real(a, rates) -> tuple[list[dict], pd.DataFrame]:
         data = inherit_parent_labels(data_raw, prefer="nearest")
         counts = data.counts()
         start = int(np.argmax(counts >= a.min_cells))
-        frames = data.frames[start:][::a.frame_stride]
+        frames = subsample_frames(data.frames[start:], a.frame_stride)
         excluded = division_affected_cells(frames, k=a.k, max_neighbour_distance=a.cap, neighbourhood_mode=MODE)
         lo = frames[0]["positions"].min(axis=0); hi = frames[-1]["positions"].max(axis=0)
         box = tuple(float(v) for v in (hi + 2.0))          # FPs are clipped to this box

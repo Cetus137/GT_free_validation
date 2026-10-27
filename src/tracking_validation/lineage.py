@@ -180,6 +180,32 @@ def division_affected_cells(
     return excluded
 
 
+def subsample_frames(frames: list[dict], stride: int) -> list[dict]:
+    """Every ``stride``-th frame, with division records repaired.
+
+    ``parent_ids`` is set only in a daughter's FIRST frame, so plain slicing loses every
+    division whose daughter is born in a skipped frame; :func:`division_affected_cells`
+    then misses it and the daughter looks like a newcomer.  Here a label that appears in
+    a kept frame without being in the previous kept frame gets its recorded parent back."""
+    if stride <= 1:
+        return list(frames)
+    parent_of: dict[int, int] = {}
+    for f in frames:
+        for lab, p in zip(f["assigned_ids"].tolist(), f["parent_ids"].tolist()):
+            if p >= 0:
+                parent_of.setdefault(int(lab), int(p))
+    kept = list(frames[::stride])
+    out = [kept[0]]
+    for prev, f in zip(kept[:-1], kept[1:]):
+        before = set(int(l) for l in prev["assigned_ids"])
+        p = f["parent_ids"].copy()
+        for i, lab in enumerate(f["assigned_ids"].tolist()):
+            if p[i] < 0 and lab not in before and lab in parent_of:
+                p[i] = parent_of[lab]
+        out.append({**f, "parent_ids": p})
+    return out
+
+
 def mask_cells(result: dict, excluded: list[set[int]]) -> dict:
     """Return a copy of a ``compute_neighbour_continuity_observed`` result with the
     excluded (pair, label) entries set to NaN in every per-cell array."""

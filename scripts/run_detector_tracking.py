@@ -46,7 +46,7 @@ from scipy.spatial import KDTree
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src")); sys.path.insert(0, str(ROOT / "scripts"))
-from tracking_validation.lineage import division_affected_cells, inherit_parent_labels  # noqa: E402
+from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, subsample_frames  # noqa: E402
 from tracking_validation.linking import link_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
 from tracking_validation.tracking_eval import COUNTS, sequence_errors  # noqa: E402
@@ -92,7 +92,7 @@ def seq_channels(frames, keep) -> list[dict]:
 def load_gt(seq: str, stride: int):
     data = inherit_parent_labels(sweep.load_ce(ROOT / "data", ROOT / "data" / "_cache", seq), prefer="nearest")
     start = int(np.argmax(data.counts() >= 50))
-    gt = data.frames[start:][::stride]; fidx = list(data.frame_indices[start:])[::stride]
+    gt = subsample_frames(data.frames[start:], stride); fidx = list(data.frame_indices[start:])[::stride]
     excl = division_affected_cells(gt, k=8, max_neighbour_distance=NEIGH_CAP, neighbourhood_mode="delaunay")
     keep = [set(int(c) for c in gt[t]["true_ids"]) - excl[t] for t in range(len(gt) - 1)]
     spacing = float(np.median([np.median(KDTree(f["positions"]).query(f["positions"], k=2)[0][:, 1]) for f in gt[::5]]))

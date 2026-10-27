@@ -37,7 +37,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src")); sys.path.insert(0, str(ROOT / "scripts"))
 
 from tracking_validation import ErrorConfig, apply_tracking_errors  # noqa: E402
-from tracking_validation.lineage import division_affected_cells, inherit_parent_labels  # noqa: E402
+from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, subsample_frames  # noqa: E402
 from tracking_validation.linking import close_gaps, link_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
 import ce_error_sweep as sweep  # noqa: E402
@@ -92,7 +92,7 @@ def main() -> int:
     rows = []
     for seq in ("01", "02"):
         data = inherit_parent_labels(sweep.load_ce(ROOT / "data", ROOT / "data" / "_cache", seq), prefer="nearest")
-        start = int(np.argmax(data.counts() >= 50)); gt = data.frames[start:][::a.stride]
+        start = int(np.argmax(data.counts() >= 50)); gt = subsample_frames(data.frames[start:], a.stride)
         excl = division_affected_cells(gt, k=8, max_neighbour_distance=a.neigh_cap, neighbourhood_mode="knn")
         keep = [set(gt[t]["true_ids"].tolist()) - excl[t] for t in range(len(gt) - 1)]
         sp = float(np.median([np.median(KDTree(f["positions"]).query(f["positions"], k=2)[0][:, 1]) for f in gt[::10]]))
