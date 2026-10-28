@@ -45,6 +45,20 @@ from tracking_validation import (  # noqa: E402
 from tracking_validation.ctc import read_ctc_tracks  # noqa: E402
 from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, mask_cells, subsample_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
+from tracking_validation.local_metrics import predicted_positions  # noqa: E402
+
+RESID_OUT = 0.5    # motion residual above this many median spacings counts as an outlier (fixed a priori)
+
+
+def motion_residuals(pair: list[dict], cap: float, excluded: set[int] | None) -> np.ndarray:
+    """Per persisting focal label: |own step - median step of retained Delaunay neighbours| / spacing."""
+    f0, f1 = pair
+    if len(f0["positions"]) < 5 or len(f1["positions"]) < 5:
+        return np.zeros(0)
+    pred, step, sp = predicted_positions(f0, f1, cap)
+    p0 = {int(l): p for l, p in zip(f0["assigned_ids"], f0["positions"])}
+    return np.array([np.linalg.norm(p0[l] + s - pred[l]) / sp for l, s in step.items()
+                     if not excluded or l not in excluded])
 
 ERROR_TYPES = ("miss", "fp", "switch", "frag", "merge", "split")   # filtered by --types
 METRIC_KEYS = {
@@ -104,6 +118,10 @@ def evaluate_pair(pair: list[dict], k: int, cap: float, excluded: set[int] | Non
     rc = res["rank_correlation"][0]; rc = rc[np.isfinite(rc)]
     out["disp_out"] = float((disp > 0.4).mean()) if disp.size else float("nan")   # displaced share > 0.4
     out["rc_out"] = float((rc < 0.3).mean()) if rc.size else float("nan")         # rank correlation < 0.3
+    # motion residual: a label's step out of line with its neighbours' (local_metrics)
+    r = motion_residuals(pair, cap, excluded)
+    out["resid"] = float(r.mean()) if r.size else float("nan")
+    out["resid_out"] = float((r > RESID_OUT).mean()) if r.size else float("nan")
     return out
 
 
@@ -121,7 +139,7 @@ def sweep_pair(pair: list[dict], box, k, cap, excluded, rates, seeds, meta: dict
                 m = evaluate_pair(obs, k, cap, excluded)
                 rows.append({**meta, "error": kind, "rate": rate, "rate_realised": real, "seed": seed,
                              "spacing": spacing, **m,
-                             **{f"d_{n}": m[n] - base[n] for n in list(METRIC_KEYS) + ["disp_out", "rc_out"]}})
+                             **{f"d_{n}": m[n] - base[n] for n in list(METRIC_KEYS) + ["disp_out", "rc_out", "resid", "resid_out"]}})
     return rows
 
 
