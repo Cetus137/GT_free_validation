@@ -77,6 +77,11 @@ def channels(pair: list[dict], ok_labels: set[int]) -> dict:
     disp = res["wio_displaced"][0][cols]; rc = res["rank_correlation"][0][cols]
     out["disp_out"] = float(np.nanmean(disp > 0.4)) if np.isfinite(disp).any() else np.nan
     out["rc_out"] = float(np.nanmean(rc < 0.3)) if np.isfinite(rc).any() else np.nan
+    # motion residual over the same focal labels (as in ce_error_sweep.motion_residuals)
+    excluded = set(int(l) for l in pair[0]["assigned_ids"]) - set(ok_labels)
+    r = sweep.motion_residuals(pair, NEIGH_CAP, excluded)
+    out["resid"] = float(r.mean()) if r.size else np.nan
+    out["resid_out"] = float((r > sweep.RESID_OUT).mean()) if r.size else np.nan
     return out
 
 
@@ -143,13 +148,16 @@ def job(args):
     return rows
 
 
+PAIRS = "detector_tracking_pairs.csv"     # per-pair table; --pairs-out writes a separate one
+
+
 def stage_link(workers: int) -> None:
     jobs = [(s, img, op, st) for s in ("01", "02") for img in IMAGES for op in OPS for st in STRIDES
             if not ("_n" in img and op == "high_recall")]
     with ProcessPoolExecutor(min(workers, len(jobs))) as ex:
         rows = [r for part in ex.map(job, jobs) for r in part]
-    pd.DataFrame(rows).to_csv(RES / "detector_tracking_pairs.csv", index=False)
-    print("wrote", RES / "detector_tracking_pairs.csv")
+    pd.DataFrame(rows).to_csv(RES / PAIRS, index=False)
+    print("wrote", RES / PAIRS)
 
 
 # --------------------------------------------------------------------------- estimate
@@ -163,7 +171,7 @@ def truth(g: pd.DataFrame) -> dict:
 
 
 def stage_estimate() -> None:
-    df = pd.read_csv(RES / "detector_tracking_pairs.csv", dtype={"seq": str})
+    df = pd.read_csv(RES / PAIRS, dtype={"seq": str})
     T = em.TYPES_4
     chans = [c for c in em.CHANNELS if c in CH]
     em.CHANNELS[:] = chans
@@ -209,7 +217,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--stage", choices=("all", "link", "estimate"), default="all")
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) - 2))
+    p.add_argument("--pairs-out", default=PAIRS, help="per-pair table file name in data/_results")
     a = p.parse_args()
+    globals()["PAIRS"] = a.pairs_out
     if a.stage in ("all", "link"):
         stage_link(a.workers)
     if a.stage in ("all", "estimate"):
