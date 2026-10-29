@@ -5,7 +5,6 @@ from itertools import combinations
 import numpy as np
 from scipy.spatial import Delaunay, KDTree
 from scipy.spatial import QhullError
-from scipy.stats import rankdata
 
 def _delaunay_adjacency(
     positions: np.ndarray,
@@ -183,6 +182,22 @@ def _delaunay_neighbour_ranks_and_distances(
     return ranks_out, dists_out
 
 
+def _average_ranks(a) -> np.ndarray:
+    """``scipy.stats.rankdata(a)`` (ties get their average rank; NaN propagates), without its
+    per-call overhead, which dominates for the ~12-element neighbour lists ranked here."""
+    a = np.asarray(a, dtype=float)
+    if np.isnan(a).any():
+        return np.full(a.shape, np.nan)
+    order = np.argsort(a, kind="mergesort")
+    s = a[order]
+    obs = np.r_[True, s[1:] != s[:-1]]
+    dense = np.cumsum(obs)
+    count = np.r_[np.nonzero(obs)[0], len(a)]
+    ranks = np.empty(len(a))
+    ranks[order] = 0.5 * (count[dense] + count[dense - 1] + 1)
+    return ranks
+
+
 def _spearman(x, y) -> float:
     """Spearman rank correlation of two equal-length sequences.
 
@@ -194,8 +209,8 @@ def _spearman(x, y) -> float:
     n = len(x)
     if n < 2:
         return float("nan")
-    rx = rankdata(x) - (n + 1) / 2.0
-    ry = rankdata(y) - (n + 1) / 2.0
+    rx = _average_ranks(x) - (n + 1) / 2.0
+    ry = _average_ranks(y) - (n + 1) / 2.0
     denom = float(np.sqrt(np.sum(rx ** 2) * np.sum(ry ** 2)))
     if denom == 0.0:
         return float("nan")
@@ -630,7 +645,7 @@ def compute_neighbour_continuity_observed(
             # neighbour's position; retention weight decays as a Gaussian with
             # the neighbour-to-nearest-t1-cell distance
             nb_pos_t0 = np.array([id_to_pos0[j] for j in neighbours0])
-            match_dists, _ = tree_t1.query(nb_pos_t0, k=1, workers=-1)
+            match_dists, _ = tree_t1.query(nb_pos_t0, k=1)   # ~12 points: threads would cost more than the query
             sigma_j = np.exp(-match_dists ** 2 / two_sigma_sq)
             positional_wio[ti, col] = float(np.dot(w, sigma_j))
 

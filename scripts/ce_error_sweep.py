@@ -43,6 +43,7 @@ from tracking_validation import (  # noqa: E402
     apply_tracking_errors, frames_from_array, realised_error_rates, simulate_sequence,
 )
 from tracking_validation.ctc import read_ctc_tracks  # noqa: E402
+from tracking_validation.errors import apply_single_hops  # noqa: E402
 from tracking_validation.lineage import division_affected_cells, inherit_parent_labels, mask_cells, subsample_frames  # noqa: E402
 from tracking_validation.metrics import compute_neighbour_continuity_observed  # noqa: E402
 from tracking_validation.local_metrics import predicted_positions  # noqa: E402
@@ -59,6 +60,17 @@ def motion_residuals(pair: list[dict], cap: float, excluded: set[int] | None) ->
     p0 = {int(l): p for l, p in zip(f0["assigned_ids"], f0["positions"])}
     return np.array([np.linalg.norm(p0[l] + s - pred[l]) / sp for l, s in step.items()
                      if not excluded or l not in excluded])
+
+
+def nearest_body_flags(pair: list[dict], cap: float, excluded: set[int] | None) -> np.ndarray:
+    """Per persisting focal label: the t+1 detection nearest its predicted position (own position +
+    median step of retained Delaunay neighbours) carries a different label (a hop)."""
+    f0, f1 = pair
+    if len(f0["positions"]) < 5 or len(f1["positions"]) < 5:
+        return np.zeros(0, dtype=bool)
+    pred, step, _ = predicted_positions(f0, f1, cap)
+    l1 = np.asarray(f1["assigned_ids"]); tree1 = KDTree(f1["positions"])
+    return np.array([int(l1[tree1.query(pred[l])[1]]) != l for l in step if not excluded or l not in excluded], dtype=bool)
 
 ERROR_TYPES = ("miss", "fp", "switch", "frag", "merge", "split")   # filtered by --types
 METRIC_KEYS = {
@@ -122,6 +134,9 @@ def evaluate_pair(pair: list[dict], k: int, cap: float, excluded: set[int] | Non
     r = motion_residuals(pair, cap, excluded)
     out["resid"] = float(r.mean()) if r.size else float("nan")
     out["resid_out"] = float((r > RESID_OUT).mean()) if r.size else float("nan")
+    # nearest-body test: share of labels whose nearest detection to the prediction is another label's
+    nb = nearest_body_flags(pair, cap, excluded)
+    out["nb"] = float(nb.mean()) if nb.size else float("nan")
     return out
 
 
@@ -134,12 +149,18 @@ def sweep_pair(pair: list[dict], box, k, cap, excluded, rates, seeds, meta: dict
         for rate in rates:
             for seed in range(seeds):
                 rng = np.random.default_rng(hash((meta["source"], meta["pair"], kind, rate, seed)) % 2**32)
-                obs, log = apply_tracking_errors(pair, error_config(kind, rate, spacing), box, rng)
-                real = realised_error_rates(pair, obs, log, first_frame_clean=True)[kind]
+                extra = {}
+                if kind == "hop":       # single hops: a missed cell's label jumps to the nearest body
+                    obs, log = apply_single_hops(pair, rate, rng)
+                    real = len(log["hops"]) / len(pair[1]["true_ids"])
+                    extra = {"hop_miss": real}
+                else:
+                    obs, log = apply_tracking_errors(pair, error_config(kind, rate, spacing), box, rng)
+                    real = realised_error_rates(pair, obs, log, first_frame_clean=True)[kind]
                 m = evaluate_pair(obs, k, cap, excluded)
                 rows.append({**meta, "error": kind, "rate": rate, "rate_realised": real, "seed": seed,
-                             "spacing": spacing, **m,
-                             **{f"d_{n}": m[n] - base[n] for n in list(METRIC_KEYS) + ["disp_out", "rc_out", "resid", "resid_out"]}})
+                             "spacing": spacing, **extra, **m,
+                             **{f"d_{n}": m[n] - base[n] for n in list(METRIC_KEYS) + ["disp_out", "rc_out", "resid", "resid_out", "nb"]}})
     return rows
 
 
@@ -290,8 +311,8 @@ def main() -> int:
                         "the calibration sweeps use this value, so any test sweep must match it)")
     p.add_argument("--seeds", type=int, default=3, help="error seeds per real pair")
     p.add_argument("--rates", type=float, nargs="+", default=[0.01, 0.02, 0.05, 0.10, 0.20])
-    p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES,
-                   help="error types to inject (default all)")
+    p.add_argument("--types", nargs="+", default=list(ERROR_TYPES), choices=ERROR_TYPES + ("hop",),
+                   help="error types to inject (default all but hop: single hops as LAP makes them)")
     p.add_argument("--sim", action="store_true", help="also run stage-matched simulations")
     p.add_argument("--sim-shape", choices=("cube", "slab"), default="cube",
                    help="slab: box depth = embryo z extent at that stage, same density")

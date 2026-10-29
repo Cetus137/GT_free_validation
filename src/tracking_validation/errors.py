@@ -495,6 +495,40 @@ def _apply_id_switches_cross_frame(
     return result, switch_log
 
 
+# --------------------------------------------------------------------------- 6c. single hops (frame pair)
+
+def apply_single_hops(pair, rate: float, rng: np.random.Generator) -> tuple[list[dict], dict]:
+    """Single-hop identity errors on a frame pair, the commonest kind an optimal linker makes.
+
+    Each cell present in both frames is, with probability ``rate``, missed at t+1, and its label
+    continues on the t+1 body nearest its position at t; that body's own label ends.  One
+    switched cell and one missed detection per hop; cells take part in at most one hop.
+    Frame t is left untouched.
+    """
+    f0, f1 = _as_frames(pair)
+    ids0, ids1 = f0["true_ids"], f1["true_ids"]
+    row0 = {int(t): i for i, t in enumerate(ids0) if t >= 0}
+    row1 = {int(t): i for i, t in enumerate(ids1) if t >= 0}
+    tree1 = KDTree(f1["positions"])
+    labels1 = f1["assigned_ids"].copy()
+    drop1, used, hops = set(), set(), []
+    for a in rng.permutation([t for t in row0 if t in row1]):
+        a = int(a)
+        if a in used or rng.random() >= rate:
+            continue
+        _, nn = tree1.query(f0["positions"][row0[a]], k=min(4, len(ids1)))
+        b = next((int(ids1[j]) for j in nn if int(ids1[j]) not in (a, -1) and int(ids1[j]) not in used
+                  and int(ids1[j]) in row0), None)
+        if b is None:
+            continue
+        used.update((a, b))
+        labels1[row1[b]] = int(f0["assigned_ids"][row0[a]])
+        drop1.add(row1[a])
+        hops.append({"frame": 1, "true_id_a": a, "true_id_b": b})
+    out1 = _subset({**f1, "assigned_ids": labels1}, np.array([i for i in range(len(ids1)) if i not in drop1], dtype=int))
+    return [f0, out1], {"hops": hops, "missed": [{"frame": 1, "true_id": h["true_id_a"]} for h in hops]}
+
+
 # --------------------------------------------------------------------------- driver
 
 def apply_tracking_errors(

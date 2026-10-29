@@ -19,11 +19,11 @@ SURFACE, INK, INK2, MUTED, GRID, AXIS = "#fcfcfb", "#0b0b0b", "#52514e", "#89878
 # fixed categorical slots (identity follows the entity, never cycled)
 SERIES = {
     "switch": "#2a78d6", "frag": "#eb6834", "miss": "#1baf7a",
-    "split": "#eda100", "merge": "#e87ba4", "fp": "#008300",
+    "split": "#eda100", "merge": "#e87ba4", "fp": "#008300", "hop": "#5b3a9e",
 }
 LABELS = {
     "switch": "Identity switch", "frag": "Track fragmentation", "miss": "Missed detection",
-    "split": "Split", "merge": "Merge", "fp": "False positive",
+    "split": "Split", "merge": "Merge", "fp": "False positive", "hop": "Single hop",
 }
 ORDER4 = ["switch", "frag", "miss", "fp"]
 ORDER6 = ["switch", "frag", "miss", "split", "merge", "fp"]

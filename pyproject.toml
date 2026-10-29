@@ -15,6 +15,7 @@ dependencies = [
 
 [project.optional-dependencies]
 ctc = ["tifffile>=2023.1"]
+scripts = ["pandas>=2.0", "matplotlib>=3.7"]
 dev = ["pytest>=8.0", "tifffile>=2023.1"]
 
 [tool.pytest.ini_options]

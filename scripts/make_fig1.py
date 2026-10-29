@@ -327,27 +327,33 @@ def c_calibration_combined(ylim=(-6, 0.5)):
 
 DEMIX_ROWS = (("d_vanished", "Δ vanished"), ("d_newcomer", "Δ newcomer"), ("d_displaced", "Δ displaced"),
               ("d_pwio", "Δ PWIO"), ("d_rc", "Δ RC"))
+DEMIX_ROWS_NB = DEMIX_ROWS + (("d_nb", "Δ nearest body"),)
 
 
-def c_calibration_demix():
-    """Response matrix as curves: the five demixing channels (rows) against the four error
-    types (columns), fine simulation sweep.  Each row shares its y range."""
-    f = R / "ce_error_sweep_fine_delaunay.csv"
-    if not f.exists():
+def c_calibration_demix(rows=DEMIX_ROWS, src=("ce_error_sweep_fine_delaunay.csv",), stem="c_calibration_demix", cols=None,
+                        source="SIM", out=None):
+    """Response matrix as curves: the demixing channels (rows) against the error types
+    (columns, default the four of ORDER4), fine sweep; ``source`` "SIM" (simulation) or "CE"
+    (errors injected into the worm ground truth).  Each row shares its y range."""
+    cols = cols or fs.ORDER4
+    files = [R / s for s in src]
+    if not all(f.exists() for f in files):
         return
-    df = pd.read_csv(f)
-    sim = df[df.source.str.startswith("SIM") & (df.error != "none")].copy()
+    df = pd.concat([pd.read_csv(f) for f in files], ignore_index=True)
+    sim = df[df.source.str.startswith(source) & (df.error != "none")].copy()
     sim["rate"] = np.round(sim.rate_realised * 100) / 100
     sim = sim[sim.rate.between(0.01, 0.05)]
-    fig, axes = plt.subplots(len(DEMIX_ROWS), 4, figsize=(fs.DOUBLE, 7.0), sharex=True, sharey="row",
-                             gridspec_kw=dict(left=0.09, right=0.99, top=0.96, bottom=0.07, wspace=0.12, hspace=0.18))
-    for r, (metric, ylabel) in enumerate(DEMIX_ROWS):
+    h = 1.4 * len(rows)
+    fig, axes = plt.subplots(len(rows), len(cols), figsize=(fs.DOUBLE, h), sharex=True, sharey="row",
+                             gridspec_kw=dict(left=0.09, right=0.99, top=1 - 0.28 / h, bottom=0.49 / h, wspace=0.12, hspace=0.18))
+    for r, (metric, ylabel) in enumerate(rows):
         lo, hi = 0.0, 0.0
-        for c, t in enumerate(fs.ORDER4):
+        for c, t in enumerate(cols):
             ax = axes[r, c]
             g = sim[sim.error == t]
             pp = g.groupby(["source", "pair", "rate"]).agg(x=("rate_realised", "mean"), y=(metric, "mean")).reset_index()
             a = pp.groupby("rate").agg(x=("x", "mean"), y=("y", "mean"), sd=("y", "std"), n=("y", "size"))
+            a = a[a.n >= 3]                     # no point without a confidence interval
             ci = 1.96 * a.sd / np.sqrt(a.n)
             x, y = np.r_[0, 100 * a.x], np.r_[0, 100 * a.y]
             ax.errorbar(x[1:], y[1:], yerr=100 * ci.values, fmt="none", ecolor=fs.SERIES[t], elinewidth=1.0,
@@ -359,11 +365,11 @@ def c_calibration_demix():
         pad = 0.08 * (hi - lo)
         axes[r, 0].set_ylim(lo - pad, hi + pad)
         axes[r, 0].set_ylabel(f"{ylabel} (×100)")
-    for c, t in enumerate(fs.ORDER4):
+    for c, t in enumerate(cols):
         axes[0, c].set_title(fs.LABELS[t], loc="left", pad=3)
         axes[-1, c].set_xlabel("Cells affected (%)")
     fig.align_ylabels(axes[:, 0])
-    fs.save(fig, OUT / "c_calibration_demix")
+    fs.save(fig, (out or OUT) / stem)
 
 
 def c_calibration_wio():
@@ -390,7 +396,13 @@ def d_inversion():
 
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
-    a_metrics(); b_errors(); c_calibration(); c_calibration_wio(); c_calibration_combined(); c_calibration_demix(); c_fingerprint(); c_fingerprint_table(); d_inversion()
+    a_metrics(); b_errors(); c_calibration(); c_calibration_wio(); c_calibration_combined(); c_calibration_demix()
+    c_calibration_demix(DEMIX_ROWS_NB, ("ce_error_sweep_fine_nb_delaunay.csv",), "c_calibration_demix_nb")
+    c_calibration_demix(DEMIX_ROWS_NB, ("ce_error_sweep_fine_nb_delaunay.csv", "ce_error_sweep_fine_hop_delaunay.csv"),
+                        "c_calibration_demix_hop", cols=["miss", "switch", "hop", "frag", "fp"])
+    c_calibration_demix(DEMIX_ROWS_NB, ("ce_error_sweep_fine_nb_delaunay.csv", "ce_error_sweep_fine_hop_delaunay.csv"),
+                        "fig_ce_calibration_demix_hop", cols=["miss", "switch", "hop", "frag", "fp"], source="CE",
+                        out=ROOT / "figures"); c_fingerprint(); c_fingerprint_table(); d_inversion()
     return 0
 
 

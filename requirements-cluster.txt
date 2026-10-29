@@ -1,0 +1,14 @@
+# Exact versions of the environment the results were produced with (Python 3.11).
+#
+#   python3.11 -m venv .venv && . .venv/bin/activate
+#   pip install -r requirements-cluster.txt && pip install -e .
+#
+# The simulation scripts also read two small result files that are not in git (data/ is excluded):
+# copy data/_results/ce_error_sweep_fine_delaunay.csv and data/_results/motion_testbed_unmixing.csv.
+# Set --workers to the cores of the node; draw figures locally (--stage figures), where the fonts are.
+numpy==2.4.3
+scipy==1.17.1
+pandas==3.0.1
+matplotlib==3.10.8
+pytest==9.0.2
+tifffile==2026.3.3
